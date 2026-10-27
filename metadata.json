@@ -1,0 +1,8 @@
+{
+  "name": "Remix Aurelith Reserve 1.1.0",
+  "description": "aurelith Reserve and Wealth Management application recreate.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

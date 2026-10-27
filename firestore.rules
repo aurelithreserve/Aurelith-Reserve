@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Default-Deny Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUser(data) {
+      return data.uid is string && data.uid.size() <= 128
+        && data.firstName is string && data.firstName.size() > 0 && data.firstName.size() <= 100
+        && data.lastName is string && data.lastName.size() > 0 && data.lastName.size() <= 100
+        && data.email is string && data.email.size() <= 150
+        && (!('phoneNumber' in data) || (data.phoneNumber is string && data.phoneNumber.size() <= 30))
+        && (!('gender' in data) || (data.gender in ['Male', 'Female']))
+        && (!('governmentId' in data) || (data.governmentId is string && data.governmentId.size() <= 100))
+        && (!('idType' in data) || (data.idType is string && data.idType.size() <= 100))
+        && (!('idNumber' in data) || (data.idNumber is string && data.idNumber.size() <= 100))
+        && (!('accountType' in data) || (data.accountType is string && data.accountType.size() <= 60))
+        && (!('accountNumber' in data) || (data.accountNumber is string && data.accountNumber.size() <= 20))
+        && (!('routingNumber' in data) || (data.routingNumber is string && data.routingNumber.size() <= 15))
+        && (!('bankName' in data) || data.bankName == null || (data.bankName is string && data.bankName.size() <= 120))
+        && (!('middleName' in data) || data.middleName == null || (data.middleName is string && data.middleName.size() <= 100))
+        && (!('hasPaymentPin' in data) || data.hasPaymentPin is bool)
+        && (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 350000))
+        && (!('photoDataUrl' in data) || data.photoDataUrl == null || (data.photoDataUrl is string && data.photoDataUrl.size() <= 350000))
+        && (!('status' in data) || (data.status in ['active', 'pending_verification']))
+        && (!('emailVerified' in data) || data.emailVerified is bool);
+    }
+
+    // Allow testing connection on app initialization
+    match /test/{docId} {
+      allow read: if true;
+    }
+
+    // User profile collection - strictly isolated and ABAC protected
+    match /users/{userId} {
+      // Only the authenticated account owner can view their private identity record
+      allow get: if isValidId(userId) && isOwner(userId);
+      // Deny bulk listing to protect all customer PII
+      allow list: if false;
+      
+      // Allow create if authenticated UID matches the document ID and schema is strictly valid
+      allow create: if isValidId(userId) 
+                    && isOwner(userId) 
+                    && incoming().uid == request.auth.uid 
+                    && isValidUser(incoming());
+
+      // Allow profile updates (such as avatar, display details, preferences, pin setup flag)
+      // Strictly restrict affected keys to prevent tampering with identity, roles, balances or account numbers
+      allow update: if isValidId(userId)
+                    && isOwner(userId)
+                    && incoming().uid == existing().uid
+                    && isValidUser(incoming())
+                    && incoming().diff(existing()).affectedKeys().hasOnly([
+                         'avatarUrl',
+                         'photoDataUrl',
+                         'bankName',
+                         'middleName',
+                         'hasPaymentPin',
+                         'updatedAt',
+                         'emailVerified',
+                         'phoneNumber',
+                         'notificationPreferences',
+                         'securitySettings'
+                       ]);
+
+      // Disallow client deletion
+      allow delete: if false;
+    }
+  }
+}

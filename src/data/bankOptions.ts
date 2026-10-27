@@ -1,0 +1,16 @@
+export const REGISTER_BANK_OPTIONS: string[] = [
+  'Aurelith Reserve',
+  'JPMorgan Chase Bank, N.A. (Chase)',
+  'Bank of America',
+  'Wells Fargo Bank',
+  'Citibank',
+  'PNC Bank',
+  'Capital One',
+  'U.S. Bank, National Association',
+  'Truist Bank',
+  'Goldman Sachs Bank',
+  'Morgan Stanley Private Bank',
+  'The Bank of New York Mellon',
+  'Barclays Bank UK PLC',
+  'HSBC UK Bank plc',
+];
