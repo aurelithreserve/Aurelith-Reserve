@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { updateFaviconForTheme } from '../utils/faviconManager';
 
 export type ThemeMode = 'light' | 'dark';
 export type ThemePreference = 'system' | 'light' | 'dark';
@@ -55,7 +56,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Effective theme is explicit preference or system fallback
   const effectiveTheme: ThemeMode = preference === 'system' ? systemTheme : preference;
 
-  // Sync DOM with effective theme
+  // Sync DOM and Favicons with effective theme
   useEffect(() => {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
@@ -69,6 +70,9 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       root.style.colorScheme = 'light';
       root.setAttribute('data-theme', 'light');
     }
+
+    // Immediately update browser tab favicons to match the effective theme
+    updateFaviconForTheme(effectiveTheme);
   }, [effectiveTheme]);
 
   const setTheme = useCallback((newTheme: ThemeMode) => {

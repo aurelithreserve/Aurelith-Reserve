@@ -30,6 +30,7 @@ export const COUNTRY_CALLING_CODES: CountryCallingCode[] = [
   { name: 'Austria', dialCode: '+43', isoCode: 'AT', flag: '🇦🇹', placeholder: '664 1234567' },
   { name: 'New Zealand', dialCode: '+64', isoCode: 'NZ', flag: '🇳🇿', placeholder: '21 123 4567' },
   { name: 'South Africa', dialCode: '+27', isoCode: 'ZA', flag: '🇿🇦', placeholder: '82 123 4567' },
+  { name: 'Sudan', dialCode: '+249', isoCode: 'SD', flag: '🇸🇩', placeholder: '91 234 5678' },
   { name: 'Saudi Arabia', dialCode: '+966', isoCode: 'SA', flag: '🇸🇦', placeholder: '50 123 4567' },
   { name: 'Qatar', dialCode: '+974', isoCode: 'QA', flag: '🇶🇦', placeholder: '3312 3456' },
   { name: 'Kuwait', dialCode: '+965', isoCode: 'KW', flag: '🇰🇼', placeholder: '9123 4567' },

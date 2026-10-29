@@ -25,6 +25,12 @@ import { useBankingAuth } from '../../context/BankingAuthContext';
 import { REGISTER_BANK_OPTIONS } from '../../data/bankOptions';
 import { COUNTRY_CALLING_CODES, CountryCallingCode, formatToE164 } from '../../data/countryCodes';
 import { parsePhoneNumberFromString, AsYouType, CountryCode } from 'libphonenumber-js';
+import { cleanAndLimitPhoneDigits, validateCountryPhoneNumber } from '../../utils/phoneValidation';
+import {
+  formatIdentityInput,
+  validateIdentityDocument,
+  getIdentityPlaceholder,
+} from '../../utils/identityValidation';
 import confetti from 'canvas-confetti';
 import { BrandLogo } from '../common/BrandLogo';
 import { auth, db } from '../../lib/firebase';
@@ -119,6 +125,9 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [phoneFormatHint, setPhoneFormatHint] = useState('');
+  const [phoneFormatValid, setPhoneFormatValid] = useState(false);
+  const [idFormatHint, setIdFormatHint] = useState('');
+  const [idFormatValid, setIdFormatValid] = useState(false);
   const [successAnimation, setSuccessAnimation] = useState(false);
 
   // Email verification state
@@ -181,28 +190,108 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
     setCountryDropdownOpen(false);
     setCountrySearchQuery('');
 
-    // Re-format existing phone input with new country formatting
+    // Re-format and enforce length for existing phone input with newly selected country
     if (formData.phoneNumber) {
-      const digitsOnly = formData.phoneNumber.replace(/[^0-9]/g, '');
-      const formatter = new AsYouType(country.isoCode as CountryCode);
-      const formatted = formatter.input(digitsOnly);
+      const { formatted, digits } = cleanAndLimitPhoneDigits(
+        formData.phoneNumber,
+        country.dialCode,
+        country.isoCode
+      );
       setFormData((prev) => ({ ...prev, phoneNumber: formatted }));
+
+      if (digits) {
+        const res = validateCountryPhoneNumber(
+          formatted,
+          country.dialCode,
+          country.isoCode,
+          country.name
+        );
+        setPhoneFormatValid(res.isValid);
+        setPhoneFormatHint(res.isValid ? (res.hint || `Valid ${country.name} number`) : (res.error || ''));
+      } else {
+        setPhoneFormatHint('');
+        setPhoneFormatValid(false);
+      }
+    }
+
+    // If document is passport, re-validate against newly selected country
+    if (formData.idType.includes('Passport') && formData.idNumber) {
+      const res = validateIdentityDocument(formData.idNumber, formData.idType, formData.state, country.isoCode);
+      setIdFormatValid(res.isValid);
+      setIdFormatHint(res.isValid ? (res.hint || 'Valid document format') : (res.error || ''));
     }
   };
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const input = e.target.value;
-    // Format dynamically as user types according to selected country numbering plan
-    const formatter = new AsYouType(selectedCountry.isoCode as CountryCode);
-    const formatted = formatter.input(input);
+    const { formatted, digits } = cleanAndLimitPhoneDigits(
+      e.target.value,
+      selectedCountry.dialCode,
+      selectedCountry.isoCode
+    );
     setFormData((prev) => ({ ...prev, phoneNumber: formatted }));
 
-    // Check validity in real time
-    const parsed = parsePhoneNumberFromString(formatted, selectedCountry.isoCode as CountryCode);
-    if (parsed && parsed.isValid()) {
-      setPhoneFormatHint(`Valid ${selectedCountry.name} number (${parsed.format('E.164')})`);
+    if (digits) {
+      const res = validateCountryPhoneNumber(
+        formatted,
+        selectedCountry.dialCode,
+        selectedCountry.isoCode,
+        selectedCountry.name
+      );
+      setPhoneFormatValid(res.isValid);
+      setPhoneFormatHint(res.isValid ? (res.hint || `Valid ${selectedCountry.name} number`) : (res.error || ''));
     } else {
+      setPhoneFormatValid(false);
       setPhoneFormatHint('');
+    }
+  };
+
+  const handleIdTypeChange = (newType: string) => {
+    const formatted = formatIdentityInput(
+      formData.idNumber,
+      newType,
+      formData.state,
+      selectedCountry.isoCode
+    );
+    setFormData((prev) => ({ ...prev, idType: newType, idNumber: formatted }));
+
+    if (formatted) {
+      const res = validateIdentityDocument(formatted, newType, formData.state, selectedCountry.isoCode);
+      setIdFormatValid(res.isValid);
+      setIdFormatHint(res.isValid ? (res.hint || 'Valid document format') : (res.error || ''));
+    } else {
+      setIdFormatValid(false);
+      setIdFormatHint('');
+    }
+  };
+
+  const handleIdNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatted = formatIdentityInput(
+      e.target.value,
+      formData.idType,
+      formData.state,
+      selectedCountry.isoCode
+    );
+    setFormData((prev) => ({ ...prev, idNumber: formatted }));
+
+    if (formatted) {
+      const res = validateIdentityDocument(formatted, formData.idType, formData.state, selectedCountry.isoCode);
+      setIdFormatValid(res.isValid);
+      setIdFormatHint(res.isValid ? (res.hint || 'Valid document format') : (res.error || ''));
+    } else {
+      setIdFormatValid(false);
+      setIdFormatHint('');
+    }
+  };
+
+  const handleStateChange = (newState: string) => {
+    setFormData((prev) => ({ ...prev, state: newState }));
+    if (
+      (formData.idType.includes("Driver's License") || formData.idType.includes('State Identification')) &&
+      formData.idNumber
+    ) {
+      const res = validateIdentityDocument(formData.idNumber, formData.idType, newState, selectedCountry.isoCode);
+      setIdFormatValid(res.isValid);
+      setIdFormatHint(res.isValid ? (res.hint || 'Valid document format') : (res.error || ''));
     }
   };
 
@@ -245,31 +334,23 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       return;
     }
 
-    // Phone validation using libphonenumber-js
-    const rawDigits = formData.phoneNumber.replace(/[^0-9]/g, '');
-    if (!rawDigits || rawDigits.length < 6) {
-      setErrorMessage('Please enter a complete telephone number.');
+    // Country-specific phone validation using libphonenumber-js
+    const phoneRes = validateCountryPhoneNumber(
+      formData.phoneNumber,
+      selectedCountry.dialCode,
+      selectedCountry.isoCode,
+      selectedCountry.name
+    );
+
+    if (!phoneRes.isValid) {
+      setErrorMessage(
+        phoneRes.error ||
+          `Please enter a valid telephone number for ${selectedCountry.name}.`
+      );
       return;
     }
 
-    let e164Number = '';
-    const parsedPhone = parsePhoneNumberFromString(
-      formData.phoneNumber,
-      selectedCountry.isoCode as CountryCode
-    );
-
-    if (parsedPhone && parsedPhone.isValid()) {
-      e164Number = parsedPhone.format('E.164');
-    } else {
-      // Fallback normalization to E.164
-      e164Number = formatToE164(selectedCountry.dialCode, rawDigits);
-      if (rawDigits.length < 7) {
-        setErrorMessage(
-          `The phone number entered is not a valid international number for ${selectedCountry.name}.`
-        );
-        return;
-      }
-    }
+    const e164Number = phoneRes.e164;
 
     if (!formData.dateOfBirth) {
       setErrorMessage('Please enter your date of birth.');
@@ -286,8 +367,16 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       return;
     }
 
-    if (!formData.idNumber.trim()) {
-      setErrorMessage("Please enter your official identification number (SSN, Driver's License, or State/Gov ID).");
+    // Identity document validation
+    const idRes = validateIdentityDocument(
+      formData.idNumber,
+      formData.idType,
+      formData.state,
+      selectedCountry.isoCode
+    );
+
+    if (!idRes.isValid) {
+      setErrorMessage(idRes.error || 'Please enter a valid official identification document number.');
       return;
     }
 
@@ -571,7 +660,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       placeholder="Your first name"
                       value={formData.firstName}
                       onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-sm sm:placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                     />
                   </div>
                 </div>
@@ -587,7 +676,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       placeholder="Your middle name"
                       value={formData.middleName}
                       onChange={(e) => setFormData({ ...formData, middleName: e.target.value })}
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-sm sm:placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                     />
                   </div>
                 </div>
@@ -604,7 +693,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       placeholder="Your last name"
                       value={formData.lastName}
                       onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-sm sm:placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                     />
                   </div>
                 </div>
@@ -624,7 +713,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       placeholder="Your email"
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-sm sm:placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                     />
                   </div>
                 </div>
@@ -658,15 +747,21 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                           placeholder="Your phone number"
                           value={formData.phoneNumber}
                           onChange={handlePhoneChange}
-                          className="w-full pl-9 pr-3 py-2.5 bg-transparent text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 text-xs sm:text-sm font-medium focus:outline-none"
+                          className="w-full pl-9 pr-3 py-2.5 bg-transparent text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-sm sm:placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 text-base sm:text-sm font-medium focus:outline-none"
                         />
                       </div>
                     </div>
 
                     {/* Phone format feedback */}
                     {phoneFormatHint && (
-                      <div className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium flex items-center space-x-1 mt-1">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                      <div className={`text-[11px] font-medium flex items-center space-x-1.5 mt-1.5 ${
+                        phoneFormatValid ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'
+                      }`}>
+                        {phoneFormatValid ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                        ) : (
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500 shrink-0" />
+                        )}
                         <span>{phoneFormatHint}</span>
                       </div>
                     )}
@@ -737,7 +832,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       required
                       value={formData.dateOfBirth}
                       onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                     />
                   </div>
                 </div>
@@ -752,7 +847,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       required
                       value={formData.gender}
                       onChange={(e) => setFormData({ ...formData, gender: e.target.value as 'Male' | 'Female' | '' })}
-                      className="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600 appearance-none cursor-pointer"
+                      className="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600 appearance-none cursor-pointer"
                     >
                       <option value="" disabled className="text-slate-400 dark:bg-[#10192A] dark:text-slate-400">
                         Select Gender
@@ -862,7 +957,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                 </p>
               </div>
 
-              {/* Official Government Identification (SSN, Driver's License, or State/Gov ID) */}
+              {/* Official Government Identification (SSN, Driver's License, State ID, Passport) */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-[#1C2B4C] dark:text-slate-200 uppercase tracking-wider mb-1.5">
@@ -873,8 +968,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                     <select
                       required
                       value={formData.idType}
-                      onChange={(e) => setFormData({ ...formData, idType: e.target.value })}
-                      className="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600 appearance-none cursor-pointer"
+                      onChange={(e) => handleIdTypeChange(e.target.value)}
+                      className="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600 appearance-none cursor-pointer"
                     >
                       <option value="Social Security Number (SSN)">Social Security Number (SSN)</option>
                       <option value="Driver's License">Driver's License</option>
@@ -888,23 +983,33 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold text-[#1C2B4C] dark:text-slate-200 uppercase tracking-wider mb-1.5">
-                    ID / SSN Number <span className="text-red-500">*</span>
+                    {formData.idType.includes('SSN') ? 'Social Security Number (SSN)' : 'ID / Document Number'} <span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
                     <CreditCard className="absolute left-3.5 top-3 w-4 h-4 text-slate-400" />
                     <input
                       type="text"
                       required
-                      placeholder={
-                        formData.idType.includes('SSN')
-                          ? 'XXX-XX-XXXX'
-                          : "Enter document / license number"
-                      }
+                      autoComplete="off"
+                      placeholder={getIdentityPlaceholder(formData.idType, formData.state, selectedCountry.isoCode)}
                       value={formData.idNumber}
-                      onChange={(e) => setFormData({ ...formData, idNumber: e.target.value })}
-                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                      onChange={handleIdNumberChange}
+                      className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600 font-mono"
                     />
                   </div>
+                  {/* Dynamic ID Format Hint */}
+                  {idFormatHint && (
+                    <div className={`text-[11px] font-medium flex items-center space-x-1.5 mt-1.5 ${
+                      idFormatValid ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'
+                    }`}>
+                      {idFormatValid ? (
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      ) : (
+                        <span className="w-1.5 h-1.5 rounded-full bg-slate-400 dark:bg-slate-500 shrink-0" />
+                      )}
+                      <span>{idFormatHint}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -920,7 +1025,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                     placeholder="Your street address"
                     value={formData.street}
                     onChange={(e) => setFormData({ ...formData, street: e.target.value })}
-                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                   />
                 </div>
 
@@ -931,7 +1036,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       placeholder="Your city"
                       value={formData.city}
                       onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none"
+                      className="w-full px-3 py-2 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none"
                     />
                   </div>
                   <div>
@@ -939,8 +1044,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       type="text"
                       placeholder="Your state or province"
                       value={formData.state}
-                      onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none"
+                      onChange={(e) => handleStateChange(e.target.value)}
+                      className="w-full px-3 py-2 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none"
                     />
                   </div>
                   <div>
@@ -949,7 +1054,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       placeholder="Your postal code"
                       value={formData.zipCode}
                       onChange={(e) => setFormData({ ...formData, zipCode: e.target.value })}
-                      className="w-full px-3 py-2 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none"
+                      className="w-full px-3 py-2 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-sm sm:placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none"
                     />
                   </div>
                 </div>
@@ -969,7 +1074,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       placeholder="Create your password"
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                      className="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                      className="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-sm sm:placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                     />
                     <button
                       type="button"
@@ -993,7 +1098,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       placeholder="Confirm your password"
                       value={formData.confirmPassword}
                       onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
-                      className="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                      className="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:italic placeholder:text-sm sm:placeholder:text-xs placeholder:text-slate-400 dark:placeholder:text-slate-500 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                     />
                     <button
                       type="button"

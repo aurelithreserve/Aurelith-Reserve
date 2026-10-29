@@ -91,6 +91,21 @@ html.dark, html.dark body {
   color-scheme: dark;
 }
 
+/* ========================================================================= */
+/* MOBILE VIEWPORT FOCUS ZOOM PREVENTION                                      */
+/* Mobile browsers (iOS Safari, WebKit, Chrome Mobile) automatically zoom in */
+/* on form inputs when their computed font-size is below 16px (1rem).        */
+/* Enforcing 16px on mobile viewports (<= 768px) eliminates unwanted focus   */
+/* zooming and horizontal shift while keeping user pinch-to-zoom intact.    */
+/* ========================================================================= */
+@media screen and (max-width: 768px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="hidden"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
 /* Custom scrollbars and transitions */
 html {
   scroll-behavior: smooth;

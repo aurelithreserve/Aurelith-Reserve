@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Lock, Mail, Phone, Eye, EyeOff, AlertCircle, ArrowLeft, CheckCircle2, ShieldCheck } from 'lucide-react';
 import { useBankingAuth } from '../../context/BankingAuthContext';
-import { bankingApi } from '../../services/bankingApi';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { auth } from '../../lib/firebase';
 import { NewDeviceVerificationModal } from './NewDeviceVerificationModal';
 import { BrandLogo } from '../common/BrandLogo';
 
@@ -35,9 +36,6 @@ export const SignInPage: React.FC<SignInPageProps> = ({
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotIdentifier, setForgotIdentifier] = useState('');
   const [forgotSuccess, setForgotSuccess] = useState(false);
-  const [forgotToken, setForgotToken] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [resetCompleted, setResetCompleted] = useState(false);
 
   const isEmail = identifier.includes('@');
 
@@ -69,38 +67,23 @@ export const SignInPage: React.FC<SignInPageProps> = ({
 
   const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!forgotIdentifier.trim()) return;
+    const emailToReset = forgotIdentifier.trim();
+    if (!emailToReset) return;
 
-    try {
-      const res = await bankingApi.forgotPassword(forgotIdentifier.trim());
-      setForgotSuccess(true);
-      if (res.demoResetToken) {
-        setForgotToken(res.demoResetToken);
-      }
-    } catch (err: any) {
-      alert(err.message || 'Failed to request reset token.');
-    }
-  };
-
-  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPassword || newPassword.length < 8) {
-      alert('Password must be at least 8 characters long.');
+    if (!emailToReset.includes('@')) {
+      alert('Please enter your registered email address to receive password reset instructions.');
       return;
     }
 
     try {
-      await bankingApi.resetPassword(forgotIdentifier.trim(), forgotToken, newPassword);
-      setResetCompleted(true);
-      setTimeout(() => {
-        setShowForgotModal(false);
-        setPassword(newPassword);
-        setIdentifier(forgotIdentifier);
-        setResetCompleted(false);
-        setForgotSuccess(false);
-      }, 1500);
+      await sendPasswordResetEmail(auth, emailToReset);
+      setForgotSuccess(true);
     } catch (err: any) {
-      alert(err.message || 'Password reset failed.');
+      if (err.code === 'auth/user-not-found') {
+        alert('No registered account was found matching this email address.');
+      } else {
+        alert(err.message || 'Failed to dispatch password recovery email.');
+      }
     }
   };
 
@@ -155,7 +138,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                   placeholder="Enter your registered email or phone"
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                   autoFocus
                 />
               </div>
@@ -178,7 +161,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                   placeholder="Enter SSN, Driver's License, or State ID"
                   value={governmentId}
                   onChange={(e) => setGovernmentId(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                 />
               </div>
             </div>
@@ -205,7 +188,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                   placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 rounded-xl text-xs sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                  className="w-full pl-10 pr-10 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                 />
                 <button
                   type="button"
@@ -266,25 +249,44 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               Enter your registered email address or phone number to retrieve your access credentials.
             </p>
 
-            {resetCompleted ? (
-              <div className="py-6 text-center space-y-2">
+            {forgotSuccess ? (
+              <div className="py-6 text-center space-y-3">
                 <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
-                <h4 className="font-bold text-slate-900 dark:text-white">Password Reset Successful!</h4>
-                <p className="text-xs text-slate-600 dark:text-slate-300">You can now sign in with your updated password.</p>
+                <h4 className="font-bold text-slate-900 dark:text-white">Password Reset Email Dispatched</h4>
+                <p className="text-xs text-slate-600 dark:text-slate-300">
+                  Firebase Authentication has dispatched a secure password recovery link to{' '}
+                  <span className="font-semibold text-slate-900 dark:text-white">{forgotIdentifier}</span>.
+                </p>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                  Please check your inbox (and spam folder) and follow the instructions to set your new password.
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowForgotModal(false);
+                      setForgotSuccess(false);
+                      setForgotIdentifier('');
+                    }}
+                    className="px-5 py-2 bg-[#1C2B4C] hover:bg-[#152033] text-white text-xs font-bold rounded-full cursor-pointer"
+                  >
+                    Return to Sign In
+                  </button>
+                </div>
               </div>
-            ) : !forgotSuccess ? (
+            ) : (
               <form onSubmit={handleForgotPasswordSubmit} className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 uppercase mb-1">
-                    Email or Phone
+                    Email Address
                   </label>
                   <input
-                    type="text"
+                    type="email"
                     required
-                    placeholder="Enter email or phone"
+                    placeholder="Enter your registered email"
                     value={forgotIdentifier}
                     onChange={(e) => setForgotIdentifier(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-xl text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
                   />
                 </div>
                 <div className="flex justify-end space-x-2 pt-2">
@@ -299,41 +301,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
                     type="submit"
                     className="px-5 py-2 bg-[#1C2B4C] dark:bg-slate-700 hover:bg-[#152033] dark:hover:bg-slate-600 text-white text-xs font-bold rounded-full cursor-pointer"
                   >
-                    Send Recovery Code
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <form onSubmit={handleResetPasswordSubmit} className="space-y-4">
-                <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-emerald-800 dark:text-emerald-300 text-xs">
-                  Demonstration Recovery Code: <span className="font-bold">{forgotToken}</span>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-200 uppercase mb-1">
-                    New Password
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="Min. 8 characters"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-xl text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
-                  />
-                </div>
-                <div className="flex justify-end space-x-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowForgotModal(false)}
-                    className="px-4 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 bg-[#C8102E] hover:bg-[#A00B22] text-white text-xs font-bold rounded-full cursor-pointer"
-                  >
-                    Save New Password
+                    Send Recovery Link
                   </button>
                 </div>
               </form>

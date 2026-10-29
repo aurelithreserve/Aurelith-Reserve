@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useBankingAuth } from '../../context/BankingAuthContext';
-import { bankingApi } from '../../services/bankingApi';
 import { TransactionPinSetupModal } from './TransactionPinSetupModal';
 
 /**
@@ -56,17 +55,9 @@ export const PostLoginPinSetupManager: React.FC = () => {
 
     // After successful login, wait a consistent delay of 6 seconds (6000ms)
     // before displaying the pop-up on the ready authenticated dashboard.
-    timerRef.current = setTimeout(async () => {
-      // Authoritative check before displaying the pop-up
-      try {
-        const latest = await bankingApi.getCurrentUser();
-        if (latest?.user?.hasPaymentPin) {
-          return;
-        }
-      } catch {
-        if (user.hasPaymentPin) {
-          return;
-        }
+    timerRef.current = setTimeout(() => {
+      if (user.hasPaymentPin) {
+        return;
       }
 
       if (!dismissedForSessionRef.current) {

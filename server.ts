@@ -2614,6 +2614,9 @@ async function startServer() {
   // VITE / STATIC SERVING
   // ==========================================
 
+  // Serve static assets from public folder (favicons, manifests, static images)
+  app.use(express.static(path.resolve(__dirname, 'public')));
+
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static(path.resolve(__dirname, 'dist')));
     app.get('*', (_req: Request, res: Response) => {

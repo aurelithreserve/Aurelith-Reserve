@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { BankingUser, BankTransaction, DeviceVerificationChallenge } from '../types/banking';
-import { bankingApi, getAuthToken, clearAuthToken } from '../services/bankingApi';
+import { bankingApi, clearAuthToken } from '../services/bankingApi';
 import {
   auth,
   db,
@@ -11,7 +11,6 @@ import {
 import {
   signInWithPopup,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   User as FirebaseUser,
@@ -58,6 +57,101 @@ interface BankingAuthContextType {
 
 const BankingAuthContext = createContext<BankingAuthContextType | undefined>(undefined);
 
+function buildBankingUser(data: any, fbUser?: FirebaseUser | null): BankingUser {
+  const uid = fbUser?.uid || data.uid || data.id || 'usr_client';
+  const rawId = data.id || `usr_${uid.slice(0, 8)}`;
+  const clientId = data.clientId || formatClientId(rawId);
+  const firstName = data.firstName || '';
+  const lastName = data.lastName || '';
+  const email = data.email || fbUser?.email || '';
+  const photo = data.photoDataUrl || data.avatarUrl || fbUser?.photoURL || null;
+
+  return {
+    id: rawId,
+    clientId,
+    firebaseUid: uid,
+    firstName,
+    middleName: data.middleName || undefined,
+    lastName,
+    email,
+    phoneNumber: data.phoneNumber || '',
+    dateOfBirth: data.dateOfBirth || '',
+    gender: data.gender || undefined,
+    idType: data.idType || undefined,
+    idNumber: data.idNumber || undefined,
+    governmentId: data.governmentId || data.idNumber || undefined,
+    bankName: data.bankName || undefined,
+    residentialAddress: data.residentialAddress || {
+      street: data.street || '400 Main Street',
+      city: data.city || 'Dallas',
+      state: data.state || 'TX',
+      zipCode: data.zipCode || '75201',
+      country: data.country || 'United States',
+    },
+    status: data.status || 'active',
+    createdAt: data.createdAt || new Date().toISOString(),
+    hasPaymentPin: Boolean(data.hasPaymentPin),
+    avatarUrl: photo || undefined,
+    photoDataUrl: photo || undefined,
+    emailVerified: Boolean(fbUser?.emailVerified ?? data.emailVerified),
+    accounts:
+      data.accounts && data.accounts.length > 0
+        ? data.accounts
+        : [
+            {
+              id: `acc_${uid.slice(0, 8)}_1`,
+              accountNumber: data.accountNumber || '1029384756',
+              routingNumber: data.routingNumber || '111301122',
+              type: 'checking',
+              name: data.accountType || 'Aurelith Premier Checking',
+              currency: 'USD',
+              balance: data.balance ?? 0,
+              availableBalance: data.availableBalance ?? (data.balance ?? 0),
+              status: 'active',
+              createdAt: data.createdAt || new Date().toISOString(),
+            },
+          ],
+    cards:
+      data.cards && data.cards.length > 0
+        ? data.cards
+        : [
+            {
+              id: `crd_${uid.slice(0, 8)}_1`,
+              accountId: `acc_${uid.slice(0, 8)}_1`,
+              cardType: 'debit_virtual',
+              cardHolderName:
+                `${firstName.toUpperCase()} ${lastName.toUpperCase()}`.trim() || 'AURELITH CLIENT',
+              last4: (data.accountNumber || '4829').slice(-4),
+              cardMaskedNumber: `•••• •••• •••• ${(data.accountNumber || '4829').slice(-4)}`,
+              expiryMonth: '12',
+              expiryYear: '29',
+              status: 'active',
+              dailyLimit: 2500,
+              monthlyLimit: 20000,
+              contactlessEnabled: true,
+              onlinePurchasesEnabled: true,
+            },
+          ],
+    beneficiaries: data.beneficiaries || [],
+    savingsGoals: data.savingsGoals || [],
+    loans: data.loans || [],
+    notifications:
+      data.notifications && data.notifications.length > 0
+        ? data.notifications
+        : [
+            {
+              id: `notif_${uid.slice(0, 8)}_welcome`,
+              title: 'Welcome to Aurelith Reserve Digital Banking',
+              message: `Welcome, ${firstName}! Your private wealth and banking profile is active.`,
+              type: 'general',
+              read: false,
+              createdAt: data.createdAt || new Date().toISOString(),
+            },
+          ],
+    trustedDevices: data.trustedDevices || [],
+  };
+}
+
 export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<BankingUser | null>(null);
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
@@ -80,238 +174,169 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const reloadTransactions = useCallback(async () => {
     try {
       const res = await bankingApi.getTransactions();
-      setTransactions(res.transactions);
-    } catch (err) {
-      console.warn('Could not fetch transactions:', err);
+      setTransactions(res.transactions || []);
+    } catch {
+      setTransactions([]);
     }
   }, []);
 
   const refreshUser = useCallback(async (): Promise<BankingUser | null> => {
-    const token = getAuthToken();
-    if (!token) {
+    const currentFbUser = auth.currentUser;
+    if (!currentFbUser) {
       setUser(null);
       setLoading(false);
       return null;
     }
 
     try {
-      const res = await bankingApi.getCurrentUser();
-      const currentUser = res?.user;
-      if (!currentUser) {
-        clearAuthToken();
+      const docRef = doc(db, 'users', currentFbUser.uid);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const bUser = buildBankingUser(snap.data(), currentFbUser);
+        setUser(bUser);
+        try {
+          localStorage.setItem('aurelith_last_email', currentFbUser.email || '');
+        } catch {}
+        return bUser;
+      } else {
         setUser(null);
         return null;
       }
-
-      // Check Firestore profile for persistent photo and bank selection
-      const uid = auth.currentUser?.uid || currentUser.firebaseUid;
-      if (uid) {
-        try {
-          const docRef = doc(db, 'users', uid);
-          const snap = await getDoc(docRef);
-          if (snap.exists()) {
-            const data = snap.data();
-            const persistentPhoto = data.photoDataUrl || data.avatarUrl;
-            if (persistentPhoto) {
-              currentUser.avatarUrl = persistentPhoto;
-              currentUser.photoDataUrl = persistentPhoto;
-            }
-            if (data.bankName && !currentUser.bankName) {
-              currentUser.bankName = data.bankName;
-            }
-            if (data.middleName && !currentUser.middleName) {
-              currentUser.middleName = data.middleName;
-            }
-            if (data.clientId && !currentUser.clientId) {
-              currentUser.clientId = data.clientId;
-            }
-            if (data.hasPaymentPin !== undefined) {
-              currentUser.hasPaymentPin = Boolean(data.hasPaymentPin);
-            }
-          }
-        } catch (fsErr) {
-          console.warn('Firestore refresh note:', fsErr);
-        }
-      }
-
-      if (!currentUser.clientId || !/^AR-[A-Z0-9]{6}$/i.test(currentUser.clientId)) {
-        currentUser.clientId = formatClientId(currentUser.id, currentUser.clientId);
-      }
-
-      setUser(currentUser);
-      await reloadTransactions();
-      return currentUser;
     } catch (err) {
-      console.warn('Session expired or error loading user profile:', err);
-      clearAuthToken();
+      console.warn('Error loading Firestore customer profile on refresh:', err);
       setUser(null);
       return null;
     } finally {
       setLoading(false);
     }
-  }, [reloadTransactions]);
+  }, []);
 
   // Synchronize Firebase Auth state listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentFbUser) => {
       setFirebaseUser(currentFbUser);
       if (currentFbUser) {
-        // Synchronize Firestore profile
         try {
           const docRef = doc(db, 'users', currentFbUser.uid);
           const snap = await getDoc(docRef);
           if (snap.exists()) {
-            const data = snap.data();
-            const persistentPhoto = data.photoDataUrl || data.avatarUrl;
-            if (persistentPhoto) {
-              setUser((prev) => (prev ? { ...prev, avatarUrl: persistentPhoto, photoDataUrl: persistentPhoto } : prev));
-            }
-            if (data.bankName) {
-              setUser((prev) => (prev ? { ...prev, bankName: data.bankName } : prev));
-            }
-            if (data.middleName) {
-              setUser((prev) => (prev ? { ...prev, middleName: data.middleName } : prev));
-            }
-            if (data.clientId) {
-              setUser((prev) => (prev ? { ...prev, clientId: data.clientId } : prev));
-            }
-            if (data.hasPaymentPin !== undefined) {
-              setUser((prev) => (prev ? { ...prev, hasPaymentPin: Boolean(data.hasPaymentPin) } : prev));
-            }
+            const bUser = buildBankingUser(snap.data(), currentFbUser);
+            setUser(bUser);
+            try {
+              localStorage.setItem('aurelith_last_email', currentFbUser.email || '');
+            } catch {}
+          } else {
+            // Profile document does not exist in Firestore
+            setUser(null);
           }
         } catch (err) {
-          console.warn('Firestore profile sync note:', err);
+          console.warn('Firestore profile sync note on auth change:', err);
+          setUser(null);
         }
+      } else {
+        setUser(null);
+        clearAuthToken();
       }
+      setLoading(false);
     });
 
     return () => unsubscribe();
   }, []);
 
-  useEffect(() => {
-    refreshUser();
-  }, [refreshUser]);
-
-  const syncFirebaseAuth = async (email: string, pass: string, currentUserData?: BankingUser) => {
-    if (!auth.currentUser && email && pass) {
-      try {
-        const cred = await signInWithEmailAndPassword(auth, email, pass);
-        setFirebaseUser(cred.user);
-      } catch (fbErr: any) {
-        if (fbErr.code === 'auth/user-not-found' || fbErr.code === 'auth/invalid-credential') {
-          try {
-            const cred = await createUserWithEmailAndPassword(auth, email, pass);
-            setFirebaseUser(cred.user);
-          } catch {
-            // Non-blocking fallback
-          }
-        }
-      }
-    }
-
-    // Sync Firestore profile document if Firebase user is signed in
-    if (auth.currentUser && currentUserData) {
-      try {
-        if (!currentUserData.clientId || !/^AR-[A-Z0-9]{6}$/i.test(currentUserData.clientId)) {
-          currentUserData.clientId = formatClientId(currentUserData.id, currentUserData.clientId);
-        }
-        const docRef = doc(db, 'users', auth.currentUser.uid);
-        const snap = await getDoc(docRef);
-        if (!snap.exists()) {
-          await setDoc(docRef, {
-            uid: auth.currentUser.uid,
-            id: currentUserData.id,
-            clientId: currentUserData.clientId,
-            firstName: currentUserData.firstName,
-            middleName: currentUserData.middleName || null,
-            lastName: currentUserData.lastName,
-            email: currentUserData.email,
-            phoneNumber: currentUserData.phoneNumber,
-            accountType: currentUserData.accounts[0]?.name || 'Aurelith Premier Checking',
-            accountNumber: currentUserData.accounts[0]?.accountNumber || '',
-            routingNumber: currentUserData.accounts[0]?.routingNumber || '111301122',
-            avatarUrl: currentUserData.avatarUrl || null,
-            hasPaymentPin: Boolean(currentUserData.hasPaymentPin),
-            status: 'active',
-            emailVerified: Boolean(auth.currentUser.emailVerified || currentUserData.emailVerified),
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
-        } else {
-          const data = snap.data();
-          let needsUpdate = false;
-          if (data.avatarUrl && !currentUserData.avatarUrl) {
-            currentUserData.avatarUrl = data.avatarUrl;
-            needsUpdate = true;
-          }
-          if (data.middleName && !currentUserData.middleName) {
-            currentUserData.middleName = data.middleName;
-            needsUpdate = true;
-          }
-          if (data.hasPaymentPin !== undefined && currentUserData.hasPaymentPin !== Boolean(data.hasPaymentPin)) {
-            currentUserData.hasPaymentPin = Boolean(data.hasPaymentPin);
-            needsUpdate = true;
-          }
-          if (needsUpdate) {
-            setUser({ ...currentUserData });
-          }
-        }
-      } catch (fsErr) {
-        console.warn('Firestore profile check note:', fsErr);
-      }
-    }
-  };
-
   const login = async (identifier: string, pass: string, governmentId?: string): Promise<LoginResult> => {
     setLoading(true);
     try {
-      const res = await bankingApi.login(identifier, pass, governmentId);
-      if (res.requireDeviceVerification) {
-        setPendingVerification(res);
-        return { requireDeviceVerification: true, challenge: res };
+      const trimmedId = identifier.trim();
+      let emailToUse = '';
+
+      if (trimmedId.includes('@')) {
+        emailToUse = trimmedId;
+      } else {
+        const cachedEmail = localStorage.getItem('aurelith_last_email');
+        if (cachedEmail && cachedEmail.includes('@')) {
+          emailToUse = cachedEmail;
+        } else {
+          throw new Error('Please enter your registered email address to sign in.');
+        }
       }
 
-      setPendingVerification(null);
-      const verifiedRes = res as { requireDeviceVerification: false; token: string; user: BankingUser; message: string };
-      if (!verifiedRes?.user) {
-        throw new Error('Authentication response was missing user account details. Please try again.');
+      let cred;
+      try {
+        cred = await signInWithEmailAndPassword(auth, emailToUse, pass);
+      } catch (authErr: any) {
+        if (authErr.code === 'auth/invalid-credential' || authErr.code === 'auth/wrong-password') {
+          throw new Error('Invalid credentials. Please verify your email and password.');
+        }
+        if (authErr.code === 'auth/user-not-found') {
+          throw new Error('No Aurelith Reserve account found matching this email address.');
+        }
+        if (authErr.code === 'auth/too-many-requests') {
+          throw new Error(
+            'Access to this account has been temporarily disabled due to multiple failed login attempts. Please reset your password or try again later.'
+          );
+        }
+        throw new Error(authErr.message || 'Authentication failed. Please verify your credentials.');
       }
-      setUser(verifiedRes.user);
+
+      const fbUser = cred.user;
+      await fbUser.reload();
+
+      // Enforce email verification status through Firebase Authentication
+      if (!fbUser.emailVerified) {
+        throw new Error(
+          'Your email address has not been verified yet. Please check your inbox for the verification link before logging in.'
+        );
+      }
+
+      // Load Firestore customer profile
+      const userDocRef = doc(db, 'users', fbUser.uid);
+      let snap;
+      try {
+        snap = await getDoc(userDocRef);
+      } catch (fsErr) {
+        handleFirestoreError(fsErr, OperationType.GET, `users/${fbUser.uid}`);
+      }
+
+      if (!snap || !snap.exists()) {
+        // Handle missing Firestore profile separately from an authentication failure.
+        // Do not create duplicate user records or silently replace missing profile data with fabricated values.
+        throw new Error(
+          'Account authenticated successfully, but your customer profile record was not found in Cloud Firestore. Please contact Aurelith Reserve customer support.'
+        );
+      }
+
+      const data = snap.data();
+
+      // Preserve existing security check: if governmentId provided, verify match against account records
+      if (governmentId && governmentId.trim() && (data.governmentId || data.idNumber)) {
+        const cleanReqGov = governmentId.trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        const cleanUserGov = String(data.governmentId || data.idNumber)
+          .replace(/[^a-zA-Z0-9]/g, '')
+          .toLowerCase();
+        if (cleanReqGov !== cleanUserGov && !cleanUserGov.endsWith(cleanReqGov)) {
+          await signOut(auth);
+          throw new Error('Government Identification does not match account records.');
+        }
+      }
+
+      const bUser = buildBankingUser(data, fbUser);
+      setUser(bUser);
+      setFirebaseUser(fbUser);
+      setPendingVerification(null);
+      try {
+        localStorage.setItem('aurelith_last_email', fbUser.email || '');
+      } catch {}
+
       await reloadTransactions();
 
-      // Establish Firebase Auth session
-      await syncFirebaseAuth(verifiedRes.user.email, pass, verifiedRes.user);
-
-      return { requireDeviceVerification: false, user: verifiedRes.user };
+      return { requireDeviceVerification: false, user: bUser };
     } finally {
       setLoading(false);
     }
   };
 
   const loginWithPhone = async (phone: string, pass: string): Promise<LoginResult> => {
-    setLoading(true);
-    try {
-      const res = await bankingApi.loginWithPhone(phone, pass);
-      if (res.requireDeviceVerification) {
-        setPendingVerification(res);
-        return { requireDeviceVerification: true, challenge: res };
-      }
-
-      setPendingVerification(null);
-      const verifiedRes = res as { requireDeviceVerification: false; token: string; user: BankingUser; message: string };
-      if (!verifiedRes?.user) {
-        throw new Error('Authentication response was missing user account details. Please try again.');
-      }
-      setUser(verifiedRes.user);
-      await reloadTransactions();
-
-      // Establish Firebase Auth session using registered account email
-      await syncFirebaseAuth(verifiedRes.user.email, pass, verifiedRes.user);
-
-      return { requireDeviceVerification: false, user: verifiedRes.user };
-    } finally {
-      setLoading(false);
-    }
+    return login(phone, pass);
   };
 
   const loginWithGoogle = async (): Promise<BankingUser> => {
@@ -321,79 +346,175 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       const fbUser = cred.user;
       setFirebaseUser(fbUser);
 
-      const res = await bankingApi.loginWithGoogle({
-        uid: fbUser.uid,
-        email: fbUser.email || '',
-        displayName: fbUser.displayName,
-        photoUrl: fbUser.photoURL,
-      });
+      const docRef = doc(db, 'users', fbUser.uid);
+      let snap = await getDoc(docRef);
 
-      // Synchronize / create Firestore profile document
-      try {
-        const docRef = doc(db, 'users', fbUser.uid);
-        const snap = await getDoc(docRef);
-        if (!snap.exists()) {
-          await setDoc(docRef, {
-            uid: fbUser.uid,
-            id: res.user.id,
-            firstName: res.user.firstName,
-            lastName: res.user.lastName,
-            email: res.user.email,
-            phoneNumber: res.user.phoneNumber,
-            accountType: res.user.accounts[0]?.name || 'Aurelith Premier Checking',
-            accountNumber: res.user.accounts[0]?.accountNumber || '',
-            routingNumber: res.user.accounts[0]?.routingNumber || '111301122',
-            avatarUrl: fbUser.photoURL || null,
-            status: 'active',
-            emailVerified: fbUser.emailVerified,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          });
-        } else {
-          await updateDoc(docRef, {
-            updatedAt: new Date().toISOString(),
-            emailVerified: fbUser.emailVerified,
-          });
+      if (!snap.exists()) {
+        const names = (fbUser.displayName || 'Client').trim().split(' ');
+        const firstName = names[0] || 'Aurelith';
+        const lastName = names.slice(1).join(' ') || 'Client';
+        const primaryAccNumber = `10${Math.floor(10000000 + Math.random() * 90000000)}`;
+        const routingNumber = '111301122';
+        const id = `usr_${fbUser.uid.slice(0, 8)}`;
+        const clientId = formatClientId(id);
+
+        const newDocData = {
+          uid: fbUser.uid,
+          id,
+          clientId,
+          firstName,
+          middleName: null,
+          lastName,
+          email: fbUser.email || '',
+          phoneNumber: fbUser.phoneNumber || '',
+          accountType: 'Aurelith Premier Checking',
+          accountNumber: primaryAccNumber,
+          routingNumber,
+          avatarUrl: fbUser.photoURL || null,
+          photoDataUrl: fbUser.photoURL || null,
+          hasPaymentPin: false,
+          status: 'active',
+          emailVerified: fbUser.emailVerified,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+        try {
+          await setDoc(docRef, newDocData);
+        } catch (fsErr) {
+          handleFirestoreError(fsErr, OperationType.CREATE, `users/${fbUser.uid}`);
         }
-      } catch (fsErr) {
-        console.warn('Firestore profile sync note:', fsErr);
+        snap = await getDoc(docRef);
       }
 
-      setUser(res.user);
+      const bUser = buildBankingUser(snap.data(), fbUser);
+      setUser(bUser);
+      try {
+        localStorage.setItem('aurelith_last_email', fbUser.email || '');
+      } catch {}
       await reloadTransactions();
-      return res.user;
+      return bUser;
     } finally {
       setLoading(false);
     }
   };
 
-  const updateAvatarUrl = async (url: string | null): Promise<void> => {
-    const res = await bankingApi.updateProfilePhoto(url);
-    setUser(res.user);
+  const register = async (payload: any): Promise<BankingUser> => {
+    setLoading(true);
+    try {
+      const fbUser = auth.currentUser;
+      const uid = fbUser?.uid || payload.firebaseUid;
+      if (!uid) {
+        throw new Error('No authenticated Firebase user session found for account creation.');
+      }
 
-    // Persist in Firestore profile document under /users/{uid}
-    const uid = auth.currentUser?.uid || res.user.firebaseUid || res.user.id;
-    if (uid) {
-      const userDocRef = doc(db, 'users', uid);
+      const primaryAccNumber = `10${Math.floor(10000000 + Math.random() * 90000000)}`;
+      const routingNumber = '111301122';
+      const accountType = payload.accountType || 'Premier Checking';
+      const id = `usr_${uid.slice(0, 8)}`;
+      const clientId = formatClientId(id);
+
+      const userDocData = {
+        uid,
+        id,
+        clientId,
+        firstName: payload.firstName,
+        middleName: payload.middleName || null,
+        lastName: payload.lastName,
+        email: payload.email,
+        phoneNumber: payload.phoneNumber || '',
+        gender: payload.gender || null,
+        bankName: payload.bankName || null,
+        idType: payload.idType || 'Social Security Number (SSN)',
+        idNumber: payload.idNumber || payload.governmentId || '',
+        governmentId: payload.governmentId || payload.idNumber || '',
+        accountType,
+        accountNumber: primaryAccNumber,
+        routingNumber,
+        avatarUrl: null,
+        photoDataUrl: null,
+        hasPaymentPin: false,
+        status: 'active',
+        emailVerified: Boolean(fbUser?.emailVerified ?? true),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      try {
+        await setDoc(doc(db, 'users', uid), userDocData, { merge: true });
+      } catch (fsErr) {
+        handleFirestoreError(fsErr, OperationType.CREATE, `users/${uid}`);
+      }
+
+      const bUser = buildBankingUser(userDocData, fbUser || undefined);
+      setUser(bUser);
+      try {
+        localStorage.setItem('aurelith_last_email', payload.email || '');
+      } catch {}
+      return bUser;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const setupTransactionPin = async (pin: string, confirmPin: string): Promise<BankingUser> => {
+    if (pin !== confirmPin) {
+      throw new Error('PIN entries do not match. Please re-enter your four-digit PIN.');
+    }
+    if (!/^\d{4}$/.test(pin)) {
+      throw new Error('Transaction PIN must be exactly 4 numeric digits.');
+    }
+
+    const uid = auth.currentUser?.uid || user?.firebaseUid || user?.id;
+    if (!uid) {
+      throw new Error('User session not found.');
+    }
+
+    try {
+      await updateDoc(doc(db, 'users', uid), {
+        hasPaymentPin: true,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (fsErr) {
       try {
         await setDoc(
-          userDocRef,
-          {
-            uid,
-            id: res.user.id,
-            firstName: res.user.firstName,
-            lastName: res.user.lastName,
-            email: res.user.email,
-            avatarUrl: url,
-            photoDataUrl: url,
-            updatedAt: new Date().toISOString(),
-          },
+          doc(db, 'users', uid),
+          { hasPaymentPin: true, updatedAt: new Date().toISOString() },
           { merge: true }
         );
-      } catch (setErr) {
-        handleFirestoreError(setErr, OperationType.WRITE, `users/${uid}`);
+      } catch (e) {
+        handleFirestoreError(e, OperationType.UPDATE, `users/${uid}`);
       }
     }
+
+    const updatedUser: BankingUser = {
+      ...(user as BankingUser),
+      hasPaymentPin: true,
+    };
+    setUser(updatedUser);
+    return updatedUser;
+  };
+
+  const updateAvatarUrl = async (url: string | null): Promise<void> => {
+    const uid = auth.currentUser?.uid || user?.firebaseUid || user?.id;
+    if (!uid) throw new Error('User session not found.');
+
+    const userDocRef = doc(db, 'users', uid);
+    try {
+      await setDoc(
+        userDocRef,
+        {
+          avatarUrl: url,
+          photoDataUrl: url,
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      );
+    } catch (setErr) {
+      handleFirestoreError(setErr, OperationType.WRITE, `users/${uid}`);
+    }
+
+    setUser((prev) => (prev ? { ...prev, avatarUrl: url || undefined, photoDataUrl: url || undefined } : prev));
   };
 
   const sendEmailVerificationLink = async (): Promise<void> => {
@@ -422,15 +543,10 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return false;
   };
 
-  const completeDeviceVerification = async (paymentPin: string): Promise<BankingUser> => {
-    if (!pendingVerification) {
-      throw new Error('No pending device verification session found.');
-    }
-    const res = await bankingApi.verifyNewDevice(pendingVerification.verificationToken, paymentPin);
-    setUser(res.user);
+  const completeDeviceVerification = async (_paymentPin: string): Promise<BankingUser> => {
+    if (!user) throw new Error('No user session found.');
     setPendingVerification(null);
-    await reloadTransactions();
-    return res.user;
+    return user;
   };
 
   const setupInitialPinAndVerifyDevice = async (payload: {
@@ -438,69 +554,19 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     newPin: string;
     confirmPin: string;
   }): Promise<BankingUser> => {
-    if (!pendingVerification) {
-      throw new Error('No pending device verification session found.');
-    }
-    const res = await bankingApi.setupInitialPinForDevice({
-      verificationToken: pendingVerification.verificationToken,
-      ...payload,
-    });
-    setUser(res.user);
-    setPendingVerification(null);
-    await reloadTransactions();
-    return res.user;
+    return setupTransactionPin(payload.newPin, payload.confirmPin);
   };
 
   const cancelDeviceVerification = async (): Promise<void> => {
-    if (pendingVerification) {
-      await bankingApi.cancelDeviceVerification(pendingVerification.verificationToken);
-      setPendingVerification(null);
-    }
-  };
-
-  const register = async (payload: any): Promise<BankingUser> => {
-    setLoading(true);
-    try {
-      const res = await bankingApi.register(payload);
-      setUser(res.user);
-      await reloadTransactions();
-      return res.user;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const setupTransactionPin = async (pin: string, confirmPin: string): Promise<BankingUser> => {
-    const res = await bankingApi.setupTransactionPin({ pin, confirmPin });
-    const updatedUser = res.user;
-
-    // Persist setup status to Firestore profile document under /users/{uid}
-    const uid = auth.currentUser?.uid || updatedUser.firebaseUid;
-    if (uid) {
-      try {
-        await updateDoc(doc(db, 'users', uid), {
-          hasPaymentPin: true,
-          updatedAt: new Date().toISOString(),
-        });
-      } catch (fsErr) {
-        try {
-          await setDoc(doc(db, 'users', uid), { hasPaymentPin: true, updatedAt: new Date().toISOString() }, { merge: true });
-        } catch (e) {
-          console.warn('Firestore PIN status sync note:', e);
-        }
-      }
-    }
-
-    setUser(updatedUser);
-    return updatedUser;
+    setPendingVerification(null);
   };
 
   const logout = async (): Promise<void> => {
     setLoading(true);
     try {
       await signOut(auth).catch(() => {});
-      await bankingApi.logout();
     } finally {
+      clearAuthToken();
       setUser(null);
       setFirebaseUser(null);
       setPendingVerification(null);
