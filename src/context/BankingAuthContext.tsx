@@ -171,14 +171,21 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     });
   };
 
-  const reloadTransactions = useCallback(async () => {
+  const reloadTransactions = useCallback(async (clientIdentifier?: string) => {
     try {
-      const res = await bankingApi.getTransactions();
+      const idToUse = clientIdentifier || user?.clientId;
+      const res = await bankingApi.getTransactions(idToUse);
       setTransactions(res.transactions || []);
     } catch {
       setTransactions([]);
     }
-  }, []);
+  }, [user?.clientId]);
+
+  useEffect(() => {
+    if (user) {
+      reloadTransactions(user.clientId);
+    }
+  }, [user?.id, user?.clientId, reloadTransactions]);
 
   const refreshUser = useCallback(async (): Promise<BankingUser | null> => {
     const currentFbUser = auth.currentUser;

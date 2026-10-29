@@ -103,6 +103,7 @@ export const StatementsView: React.FC = () => {
         endDate,
         category,
         deliveryMethod,
+        user,
       });
       setStatementData(res);
     } catch (err: any) {
@@ -164,6 +165,7 @@ export const StatementsView: React.FC = () => {
         endDate,
         category,
         deliveryMethod,
+        user,
       });
       setStatementData(prepResult);
 
@@ -404,6 +406,53 @@ export const StatementsView: React.FC = () => {
                 </div>
               </div>
 
+              {/* Quick Date Range Presets */}
+              <div className="flex flex-wrap items-center gap-2 pt-1 pb-1">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Quick Presets:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStartDate('2018-09-02');
+                    setEndDate('2026-10-28');
+                  }}
+                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer border ${
+                    startDate === '2018-09-02' && endDate === '2026-10-28'
+                      ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700 shadow-xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-transparent hover:bg-slate-200'
+                  }`}
+                >
+                  Full Reconciled Ledger (Sep 2, 2018 – Oct 28, 2026)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStartDate('2026-01-01');
+                    setEndDate('2026-10-28');
+                  }}
+                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer border ${
+                    startDate === '2026-01-01' && endDate === '2026-10-28'
+                      ? 'bg-[#1C2B4C] text-white border-transparent'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-transparent hover:bg-slate-200'
+                  }`}
+                >
+                  2026 Year-to-Date
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStartDate('2026-10-01');
+                    setEndDate('2026-10-28');
+                  }}
+                  className={`px-3 py-1 text-xs font-semibold rounded-lg transition-colors cursor-pointer border ${
+                    startDate === '2026-10-01' && endDate === '2026-10-28'
+                      ? 'bg-[#1C2B4C] text-white border-transparent'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-transparent hover:bg-slate-200'
+                  }`}
+                >
+                  Current Period (Oct 2026)
+                </button>
+              </div>
+
               {/* 5 Mandatory Controls Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* 1. Start Date */}
@@ -537,37 +586,52 @@ export const StatementsView: React.FC = () => {
           {/* Statement Live Preview & Ledger View */}
           <div className="bg-white dark:bg-[#152033] rounded-3xl p-6 sm:p-10 border border-slate-200 dark:border-slate-800 shadow-xs space-y-6">
             {/* Letterhead Header */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-6 border-b-2 border-[#1C2B4C] dark:border-slate-700">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-xl bg-[#1C2B4C] dark:bg-red-600 text-white flex items-center justify-center font-bold text-lg">
-                  AR
-                </div>
-                <div>
-                  <span className="font-extrabold text-lg tracking-tight text-[#1C2B4C] dark:text-white block leading-none">
-                    AURELITH RESERVE
-                  </span>
-                  <span className="text-[9px] uppercase tracking-widest text-[#C8102E] dark:text-red-400 font-bold block mt-0.5">
-                    Wealth Management &amp; Banking
-                  </span>
-                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                    400 Pine Street, Headquarters • Dallas, TX 75201
-                  </span>
-                </div>
-              </div>
+            {(() => {
+              const isSimulatedStatement = Boolean(
+                statementData?.account.id === 'acc_ar_6f7079_01' ||
+                user?.clientId === 'AR-6F7079' ||
+                user?.clientId === 'AR-70363A' ||
+                statementData?.transactions.some((t) => (t as any).isSimulated || t.description?.includes('[Simulated'))
+              );
+              return (
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-6 border-b-2 border-[#1C2B4C] dark:border-slate-700">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 rounded-xl bg-[#1C2B4C] dark:bg-red-600 text-white flex items-center justify-center font-bold text-lg">
+                      AR
+                    </div>
+                    <div>
+                      <span className="font-extrabold text-lg tracking-tight text-[#1C2B4C] dark:text-white block leading-none">
+                        AURELITH RESERVE
+                      </span>
+                      <span className="text-[9px] uppercase tracking-widest text-[#C8102E] dark:text-red-400 font-bold block mt-0.5">
+                        Wealth Management &amp; Banking
+                      </span>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                        400 Pine Street, Headquarters • Dallas, TX 75201
+                      </span>
+                    </div>
+                  </div>
 
-              <div className="text-left sm:text-right text-xs space-y-0.5">
-                <div className="font-bold text-sm text-[#1C2B4C] dark:text-white uppercase tracking-wide">
-                  Certified Account Statement
+                  <div className="text-left sm:text-right text-xs space-y-0.5">
+                    <div className="font-bold text-sm text-[#1C2B4C] dark:text-white uppercase tracking-wide">
+                      {isSimulatedStatement ? 'Demonstration Account Statement' : 'Certified Account Statement'}
+                    </div>
+                    {isSimulatedStatement && (
+                      <div className="text-[10px] text-amber-700 dark:text-amber-400 font-bold uppercase tracking-wider">
+                        [Simulated Historical Ledger • Evaluation Record]
+                      </div>
+                    )}
+                    <div className="text-slate-600 dark:text-slate-300 font-medium">
+                      Period: <span className="text-slate-900 dark:text-white font-semibold">{startDate}</span> to{' '}
+                      <span className="text-slate-900 dark:text-white font-semibold">{endDate}</span>
+                    </div>
+                    <div className="text-slate-500 dark:text-slate-400">
+                      Category: <span className="font-semibold text-slate-700 dark:text-slate-200">{category}</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-slate-600 dark:text-slate-300 font-medium">
-                  Period: <span className="text-slate-900 dark:text-white font-semibold">{startDate}</span> to{' '}
-                  <span className="text-slate-900 dark:text-white font-semibold">{endDate}</span>
-                </div>
-                <div className="text-slate-500 dark:text-slate-400">
-                  Category: <span className="font-semibold text-slate-700 dark:text-slate-200">{category}</span>
-                </div>
-              </div>
-            </div>
+              );
+            })()}
 
             {/* Account & Holder Coordinates */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -717,24 +781,42 @@ export const StatementsView: React.FC = () => {
             </div>
 
             {/* Real-Time Bank Audit Stamp Box Preview */}
-            <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="p-3.5 rounded-xl border-2 border-dashed border-[#1C2B4C]/40 dark:border-slate-700 bg-slate-50/80 dark:bg-[#10192A] w-full sm:w-auto text-left space-y-1">
-                <div className="flex items-center space-x-1.5 text-xs font-bold text-[#C8102E] dark:text-red-400">
-                  <Building className="w-3.5 h-3.5" />
-                  <span>AURELITH RESERVE • OFFICIAL AUDIT STAMP</span>
-                </div>
-                <div className="text-[11px] text-[#1C2B4C] dark:text-slate-200 font-mono">
-                  Timestamp: {statementData ? statementData.serverTimeFormatted : `${new Date().toLocaleTimeString()} CDT`}
-                </div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400">
-                  Digital Verification: Authenticated • Timezone: CDT (UTC-05:00)
-                </div>
-              </div>
+            {(() => {
+              const isSimulatedStatement = Boolean(
+                statementData?.account.id === 'acc_ar_6f7079_01' ||
+                user?.clientId === 'AR-6F7079' ||
+                user?.clientId === 'AR-70363A' ||
+                statementData?.transactions.some((t) => (t as any).isSimulated || t.description?.includes('[Simulated'))
+              );
+              return (
+                <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="p-3.5 rounded-xl border-2 border-dashed border-[#1C2B4C]/40 dark:border-slate-700 bg-slate-50/80 dark:bg-[#10192A] w-full sm:w-auto text-left space-y-1">
+                    <div className="flex items-center space-x-1.5 text-xs font-bold text-[#C8102E] dark:text-red-400">
+                      <Building className="w-3.5 h-3.5" />
+                      <span>
+                        {isSimulatedStatement
+                          ? 'AURELITH RESERVE • DEMONSTRATION AUDIT RECORD'
+                          : 'AURELITH RESERVE • OFFICIAL AUDIT STAMP'}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-[#1C2B4C] dark:text-slate-200 font-mono">
+                      Timestamp: {statementData ? statementData.serverTimeFormatted : `${new Date().toLocaleTimeString()} CDT`}
+                    </div>
+                    <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                      {isSimulatedStatement
+                        ? 'Reconciliation: Fully Reconciled Demo Ledger • Timezone: CDT (UTC-05:00)'
+                        : 'Digital Verification: Authenticated • Timezone: CDT (UTC-05:00)'}
+                    </div>
+                  </div>
 
-              <div className="text-[11px] text-slate-500 dark:text-slate-400 text-center sm:text-right max-w-sm">
-                Deposits FDIC insured up to $250,000. Aurelith Reserve • Member FDIC • Equal Housing Lender.
-              </div>
-            </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 text-center sm:text-right max-w-sm">
+                    {isSimulatedStatement
+                      ? 'Demonstration Record: Reflects simulated ledger transactions and reconciliation data for evaluation purposes. Aurelith Reserve.'
+                      : 'Deposits FDIC insured up to $250,000. Aurelith Reserve • Member FDIC • Equal Housing Lender.'}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Customer's Previous & Pending Statement Requests Section */}

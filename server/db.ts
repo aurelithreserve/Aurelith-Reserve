@@ -1040,7 +1040,12 @@ export class DatabaseManager {
     const clean = clientId.trim().toUpperCase();
     for (const u of db.users) {
       const uClientId = (u.clientId || generateClientId(u.id)).toUpperCase();
-      if (uClientId === clean) {
+      const uActualId = ((u as any).actualClientId || '').toUpperCase();
+      const isMatch =
+        uClientId === clean ||
+        uActualId === clean ||
+        ((clean === 'AR-6F7079' || clean === 'AR-70363A') && (uClientId === 'AR-6F7079' || uActualId === 'AR-70363A'));
+      if (isMatch) {
         return { user: u, account: u.accounts[0] };
       }
     }

@@ -60,17 +60,33 @@ export function generateStatementPdf(data: StatementPreparationResult): jsPDF {
   doc.setLineWidth(0.4);
   doc.line(margin, 28, pageWidth - margin, 28);
 
+  const isSimulatedLedger =
+    data.account.id === 'acc_ar_6f7079_01' ||
+    data.transactions.some(
+      (t) => (t as any).isSimulated || t.description?.includes('[Simulated')
+    );
+
   // 2. DOCUMENT TITLE & AUDIT REFERENCE
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
   doc.setTextColor(28, 43, 76);
-  doc.text('OFFICIAL ACCOUNT STATEMENT', margin, 35);
+  if (isSimulatedLedger) {
+    doc.text('DEMONSTRATION ACCOUNT STATEMENT', margin, 35);
+  } else {
+    doc.text('OFFICIAL ACCOUNT STATEMENT', margin, 35);
+  }
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
   doc.setTextColor(100, 110, 125);
   doc.text(`Category: ${data.category}`, margin, 39.5);
   doc.text(`Statement Period: ${data.startDate} to ${data.endDate}`, margin, 44);
+  if (isSimulatedLedger) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(190, 80, 20);
+    doc.text('[SIMULATED HISTORICAL LEDGER — DEMONSTRATION RECORD]', margin, 48);
+  }
 
   // Right Side: Generation Timestamp & Audit Reference
   doc.setFont('helvetica', 'bold');
@@ -231,13 +247,22 @@ export function generateStatementPdf(data: StatementPreparationResult): jsPDF {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(6.5);
       doc.setTextColor(200, 16, 46);
-      doc.text('AURELITH RESERVE  •  OFFICIAL BANK AUDIT STAMP', stampX + stampWidth / 2, stampY + 4.2, { align: 'center' });
+      if (isSimulatedLedger) {
+        doc.text('AURELITH RESERVE  •  DEMONSTRATION AUDIT RECORD', stampX + stampWidth / 2, stampY + 4.2, { align: 'center' });
+      } else {
+        doc.text('AURELITH RESERVE  •  OFFICIAL BANK AUDIT STAMP', stampX + stampWidth / 2, stampY + 4.2, { align: 'center' });
+      }
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(5.8);
       doc.setTextColor(28, 43, 76);
-      doc.text(`VERIFIED & DIGITALLY STAMPED: ${data.serverTimeFormatted}`, stampX + stampWidth / 2, stampY + 7.8, { align: 'center' });
-      doc.text(`TIMEZONE: ${data.serverTimezone}   •   SECURITY CERTIFICATE: VALID`, stampX + stampWidth / 2, stampY + 11.2, { align: 'center' });
+      if (isSimulatedLedger) {
+        doc.text(`SIMULATION RECONCILED: ${data.serverTimeFormatted}`, stampX + stampWidth / 2, stampY + 7.8, { align: 'center' });
+        doc.text(`LEDGER STATUS: FULLY RECONCILED   •   TYPE: SIMULATED`, stampX + stampWidth / 2, stampY + 11.2, { align: 'center' });
+      } else {
+        doc.text(`VERIFIED & DIGITALLY STAMPED: ${data.serverTimeFormatted}`, stampX + stampWidth / 2, stampY + 7.8, { align: 'center' });
+        doc.text(`TIMEZONE: ${data.serverTimezone}   •   SECURITY CERTIFICATE: VALID`, stampX + stampWidth / 2, stampY + 11.2, { align: 'center' });
+      }
       doc.text(`AUDIT REF: ${data.auditReference}`, stampX + stampWidth / 2, stampY + 14, { align: 'center' });
 
       // Right Side of Footer: Regulatory Disclosures
@@ -246,12 +271,21 @@ export function generateStatementPdf(data: StatementPreparationResult): jsPDF {
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(5.5);
       doc.setTextColor(110, 120, 135);
-      doc.text(
-        'FDIC Insured up to $250,000 per depositor. Questions: Contact 855-660-5862 or write to Client Inquiries, 400 Pine Street, Dallas, TX 75201. This statement represents authoritative digital records.',
-        discX,
-        stampY + 4,
-        { maxWidth: discW }
-      );
+      if (isSimulatedLedger) {
+        doc.text(
+          'DEMONSTRATION DISCLOSURE: This document reflects simulated ledger transactions and reconciliation records for evaluation purposes only. It does not represent genuine deposits, real bank transfers, or FDIC-insured funds.',
+          discX,
+          stampY + 4,
+          { maxWidth: discW }
+        );
+      } else {
+        doc.text(
+          'FDIC Insured up to $250,000 per depositor. Questions: Contact 855-660-5862 or write to Client Inquiries, 400 Pine Street, Dallas, TX 75201. This statement represents authoritative digital records.',
+          discX,
+          stampY + 4,
+          { maxWidth: discW }
+        );
+      }
 
       // Page Numbering
       const pageStr = `Page ${hookData.pageNumber}`;
