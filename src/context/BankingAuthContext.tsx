@@ -60,21 +60,24 @@ const BankingAuthContext = createContext<BankingAuthContextType | undefined>(und
 function buildBankingUser(data: any, fbUser?: FirebaseUser | null): BankingUser {
   const uid = fbUser?.uid || data.uid || data.id || 'usr_client';
   const rawId = data.id || `usr_${uid.slice(0, 8)}`;
-  const clientId = data.clientId || formatClientId(rawId);
-  const firstName = data.firstName || '';
-  const lastName = data.lastName || '';
   const email = data.email || fbUser?.email || '';
+  const isTarget60FCE0 = (data.clientId === 'AR-60FCE0') || (email && email.toLowerCase() === 'aurelithreserve@gmail.com');
+  const clientId = isTarget60FCE0 ? 'AR-60FCE0' : (data.clientId || formatClientId(rawId));
+  const firstName = data.firstName || (isTarget60FCE0 ? 'Aurelith' : '');
+  const lastName = data.lastName || (isTarget60FCE0 ? 'Reserve' : '');
   const photo = data.photoDataUrl || data.avatarUrl || fbUser?.photoURL || null;
 
+  const resolvedBalance = isTarget60FCE0 ? 3867235.00 : (clientId === 'AR-6F7079' || clientId === 'AR-70363A' ? 3800000.00 : 0);
+
   return {
-    id: rawId,
+    id: isTarget60FCE0 ? 'usr_ar_60fce0' : rawId,
     clientId,
     firebaseUid: uid,
     firstName,
     middleName: data.middleName || undefined,
     lastName,
     email,
-    phoneNumber: data.phoneNumber || '',
+    phoneNumber: data.phoneNumber || (isTarget60FCE0 ? '+12145556092' : ''),
     dateOfBirth: data.dateOfBirth || '',
     gender: data.gender || undefined,
     idType: data.idType || undefined,
@@ -82,33 +85,33 @@ function buildBankingUser(data: any, fbUser?: FirebaseUser | null): BankingUser 
     governmentId: data.governmentId || data.idNumber || undefined,
     bankName: data.bankName || undefined,
     residentialAddress: data.residentialAddress || {
-      street: data.street || '400 Main Street',
+      street: data.street || (isTarget60FCE0 ? '500 Crescent Court, Suite 400' : '400 Main Street'),
       city: data.city || 'Dallas',
       state: data.state || 'TX',
       zipCode: data.zipCode || '75201',
       country: data.country || 'United States',
     },
     status: data.status || 'active',
-    createdAt: data.createdAt || new Date().toISOString(),
-    hasPaymentPin: Boolean(data.hasPaymentPin),
+    createdAt: data.createdAt || (isTarget60FCE0 ? '2019-01-15T00:00:00.000Z' : new Date().toISOString()),
+    hasPaymentPin: isTarget60FCE0 ? true : Boolean(data.hasPaymentPin),
     avatarUrl: photo || undefined,
     photoDataUrl: photo || undefined,
     emailVerified: Boolean(fbUser?.emailVerified ?? data.emailVerified),
     accounts:
       data.accounts && data.accounts.length > 0
-        ? data.accounts
+        ? data.accounts.map((acc: any) => isTarget60FCE0 && (acc.balance === 0 || acc.balance == null) ? { ...acc, balance: 3867235.00, availableBalance: 3867235.00 } : acc)
         : [
             {
-              id: `acc_${uid.slice(0, 8)}_1`,
-              accountNumber: data.accountNumber || '1029384756',
+              id: isTarget60FCE0 ? 'acc_ar_60fce0_01' : `acc_${uid.slice(0, 8)}_1`,
+              accountNumber: data.accountNumber || (isTarget60FCE0 ? '1100609230' : '1029384756'),
               routingNumber: data.routingNumber || '111301122',
               type: 'checking',
               name: data.accountType || 'Aurelith Premier Checking',
               currency: 'USD',
-              balance: data.balance ?? 0,
-              availableBalance: data.availableBalance ?? (data.balance ?? 0),
+              balance: data.balance ?? resolvedBalance,
+              availableBalance: data.availableBalance ?? (data.balance ?? resolvedBalance),
               status: 'active',
-              createdAt: data.createdAt || new Date().toISOString(),
+              createdAt: data.createdAt || (isTarget60FCE0 ? '2019-01-15T00:00:00.000Z' : new Date().toISOString()),
             },
           ],
     cards:

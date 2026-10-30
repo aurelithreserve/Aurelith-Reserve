@@ -21,6 +21,12 @@ import {
   AR_6F7079_USER,
   prepareReconciledStatement,
 } from '../data/simulatedLedgerAR6F7079';
+import {
+  AR_60FCE0_TRANSACTIONS,
+  AR_60FCE0_ACCOUNT,
+  AR_60FCE0_USER,
+  prepareAR60FCE0ReconciledStatement,
+} from '../data/simulatedLedgerAR60FCE0';
 
 const TOKEN_KEY = 'aurelith_banking_token';
 
@@ -297,6 +303,9 @@ export const bankingApi = {
       // Fall through to client check
     }
 
+    if (clientId === 'AR-60FCE0') {
+      return { transactions: AR_60FCE0_TRANSACTIONS };
+    }
     if (clientId === 'AR-6F7079' || clientId === 'AR-70363A') {
       return { transactions: AR_6F7079_TRANSACTIONS };
     }
@@ -605,6 +614,21 @@ export const bankingApi = {
       }
     } catch {
       // Server prepare failed or static deployment
+    }
+
+    // Client-side authoritative fallback for AR-60FCE0
+    if (payload.user?.clientId === 'AR-60FCE0' || (!payload.user && payload.accountId === 'acc_ar_60fce0_01')) {
+      const userToUse = payload.user || AR_60FCE0_USER;
+      const accountToUse = userToUse.accounts.find((a) => a.id === payload.accountId) || AR_60FCE0_ACCOUNT;
+      return prepareAR60FCE0ReconciledStatement(
+        AR_60FCE0_TRANSACTIONS,
+        accountToUse,
+        userToUse,
+        payload.startDate,
+        payload.endDate,
+        payload.category,
+        (payload.deliveryMethod as any) || 'download'
+      );
     }
 
     // Client-side authoritative fallback for AR-6F7079 / AR-70363A

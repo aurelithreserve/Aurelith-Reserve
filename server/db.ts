@@ -1047,7 +1047,8 @@ export class DatabaseManager {
       const isMatch =
         uClientId === clean ||
         uActualId === clean ||
-        ((clean === 'AR-6F7079' || clean === 'AR-70363A') && (uClientId === 'AR-6F7079' || uClientId === 'AR-70363A' || uActualId === 'AR-70363A'));
+        ((clean === 'AR-6F7079' || clean === 'AR-70363A') && (uClientId === 'AR-6F7079' || uClientId === 'AR-70363A' || uActualId === 'AR-70363A')) ||
+        (clean === 'AR-60FCE0' && (uClientId === 'AR-60FCE0' || uActualId === 'AR-60FCE0'));
       if (isMatch) {
         return { user: u, account: u.accounts[0] };
       }
