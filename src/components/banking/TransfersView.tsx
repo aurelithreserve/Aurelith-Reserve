@@ -588,13 +588,6 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
               <span className="text-slate-500 dark:text-slate-400">Settlement Time:</span>
               <span className="text-slate-700 dark:text-slate-300">{new Date(receipt.timestamp).toLocaleString()}</span>
             </div>
-
-            <div className="flex justify-between pt-2 border-t border-slate-200/80 dark:border-slate-800">
-              <span className="text-slate-700 dark:text-slate-300 font-bold">New Available Balance:</span>
-              <span className="font-mono font-bold text-[#1C2B4C] dark:text-white">
-                ${receipt.newBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </span>
-            </div>
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 pt-2">

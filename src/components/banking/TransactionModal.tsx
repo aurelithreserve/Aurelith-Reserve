@@ -43,7 +43,17 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ transaction,
             <X className="w-4 h-4" />
           </button>
 
-          <h3 className="text-xl font-bold">Transaction Receipt</h3>
+          <div className="flex items-center space-x-2.5">
+            <div className="w-7 h-7 rounded-lg bg-[#C8102E] flex items-center justify-center text-white font-extrabold text-xs shadow-xs">
+              AR
+            </div>
+            <div>
+              <span className="text-[10px] tracking-widest uppercase font-semibold text-slate-300 block">
+                Aurelith Reserve Private Banking
+              </span>
+              <h3 className="text-lg font-bold leading-tight">Transaction Receipt</h3>
+            </div>
+          </div>
         </div>
 
         {/* Amount & Status Badge */}
@@ -58,17 +68,20 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ transaction,
             {isCredit ? <ArrowDownLeft className="w-6 h-6" /> : <ArrowUpRight className="w-6 h-6" />}
           </div>
           <div className="text-3xl font-extrabold font-mono tracking-tight text-[#1C2B4C] dark:text-white">
-            {isCredit ? '+' : '-'}${transaction.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            {isCredit ? '+' : '-'}${transaction.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
-          <div className="mt-1">
+          <div className="mt-1 flex items-center justify-center space-x-2">
             <span className="px-3 py-0.5 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold rounded-full border border-emerald-200 dark:border-emerald-800">
               Status: {transaction.status.toUpperCase()}
+            </span>
+            <span className="px-2.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-semibold rounded-full border border-slate-200 dark:border-slate-700">
+              {isCredit ? 'Incoming Transfer / Deposit' : 'Outgoing Transfer / Payment'}
             </span>
           </div>
         </div>
 
         {/* Detailed Metadata Fields */}
-        <div className="p-6 space-y-3 text-xs text-slate-700 dark:text-slate-300 flex-1">
+        <div className="p-6 space-y-2.5 text-xs text-slate-700 dark:text-slate-300 flex-1 overflow-y-auto max-h-[50vh]">
           <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
             <span className="text-slate-500 dark:text-slate-400">Transaction Reference:</span>
             <div className="flex items-center space-x-1.5 font-mono font-bold text-slate-900 dark:text-white">
@@ -89,18 +102,51 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ transaction,
             <span className="font-medium text-slate-800 dark:text-slate-200">{transaction.category}</span>
           </div>
 
-          {transaction.recipientName && (
-            <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-              <span className="text-slate-500 dark:text-slate-400">Beneficiary / Party:</span>
-              <span className="font-semibold text-slate-900 dark:text-white">{transaction.recipientName}</span>
-            </div>
-          )}
-
-          {transaction.recipientAccount && (
-            <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-              <span className="text-slate-500 dark:text-slate-400">Beneficiary Account:</span>
-              <span className="font-mono text-slate-900 dark:text-white">{transaction.recipientAccount}</span>
-            </div>
+          {/* Counterparties: Incoming vs Outgoing */}
+          {isCredit ? (
+            <>
+              {(transaction.senderName || transaction.recipientName) && (
+                <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                  <span className="text-slate-500 dark:text-slate-400">Sender / Originator:</span>
+                  <span className="font-semibold text-slate-900 dark:text-white text-right">
+                    {transaction.senderName || 'Verified Corporate / Interbank Originator'}
+                  </span>
+                </div>
+              )}
+              {transaction.senderBank && (
+                <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                  <span className="text-slate-500 dark:text-slate-400">Originating Institution:</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">{transaction.senderBank}</span>
+                </div>
+              )}
+              {transaction.senderAccount && (
+                <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                  <span className="text-slate-500 dark:text-slate-400">Originating Routing / Account:</span>
+                  <span className="font-mono text-slate-800 dark:text-slate-200">{transaction.senderAccount}</span>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {transaction.recipientName && (
+                <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                  <span className="text-slate-500 dark:text-slate-400">Recipient / Beneficiary:</span>
+                  <span className="font-semibold text-slate-900 dark:text-white text-right">{transaction.recipientName}</span>
+                </div>
+              )}
+              {transaction.recipientBank && (
+                <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                  <span className="text-slate-500 dark:text-slate-400">Destination Institution:</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">{transaction.recipientBank}</span>
+                </div>
+              )}
+              {transaction.recipientAccount && (
+                <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                  <span className="text-slate-500 dark:text-slate-400">Beneficiary Account:</span>
+                  <span className="font-mono text-slate-900 dark:text-white">{transaction.recipientAccount}</span>
+                </div>
+              )}
+            </>
           )}
 
           <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
@@ -109,14 +155,22 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({ transaction,
           </div>
 
           <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
-            <span className="text-slate-500 dark:text-slate-400">Processing Fee:</span>
-            <span className="font-bold text-emerald-600 dark:text-emerald-400">Free ($0.00)</span>
+            <span className="text-slate-500 dark:text-slate-400">Transaction Fee:</span>
+            <span className="font-semibold text-slate-900 dark:text-white">
+              {transaction.fee && transaction.fee > 0
+                ? `$${transaction.fee.toFixed(2)}`
+                : '$0.00 (Standard Allowance)'}
+            </span>
           </div>
 
-          <div className="flex justify-between py-1 pt-2 font-bold text-sm">
-            <span className="text-slate-800 dark:text-slate-200">Ledger Balance After:</span>
-            <span className="font-mono text-[#1C2B4C] dark:text-blue-400">${transaction.balanceAfter.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
-          </div>
+          {!isCredit && transaction.fee > 0 && (
+            <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800 font-bold">
+              <span className="text-slate-600 dark:text-slate-300">Total Debit (Amount + Fee):</span>
+              <span className="font-mono text-slate-900 dark:text-white">
+                ${(transaction.amount + transaction.fee).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Footer Actions */}

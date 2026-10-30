@@ -83,6 +83,9 @@ export interface BankTransaction {
   amount: number;
   direction: 'debit' | 'credit';
   description: string;
+  senderName?: string;
+  senderAccount?: string;
+  senderBank?: string;
   recipientName?: string;
   recipientAccount?: string;
   recipientBank?: string;

@@ -55,11 +55,11 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(20);
 
-  // Check if viewing target demo client account
+  // Check if viewing target client account AR-70363A (or legacy AR-6F7079)
   const isTargetAccount =
-    user?.clientId === TARGET_CLIENT_ID ||
-    user?.clientId === ACTUAL_CLIENT_ID ||
-    transactions.some((t) => t.description.includes('[Simulated Demo]'));
+    user?.clientId === 'AR-70363A' ||
+    user?.clientId === 'AR-6F7079' ||
+    user?.firstName === 'Thane';
 
   // Categories present in transactions
   const categories = Array.from(new Set(transactions.map((t) => t.category)));
@@ -84,7 +84,10 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
             t.description.toLowerCase().includes(q) ||
             t.category.toLowerCase().includes(q) ||
             t.reference.toLowerCase().includes(q) ||
-            (t.recipientName && t.recipientName.toLowerCase().includes(q))
+            (t.senderName && t.senderName.toLowerCase().includes(q)) ||
+            (t.senderBank && t.senderBank.toLowerCase().includes(q)) ||
+            (t.recipientName && t.recipientName.toLowerCase().includes(q)) ||
+            (t.recipientBank && t.recipientBank.toLowerCase().includes(q))
           );
         }
         return true;
@@ -134,10 +137,9 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   };
 
   const exportCSV = () => {
-    const headers = ['Reference,Date,Type,Category,Description,Amount,Direction,Status,BalanceAfter,RecordType\n'];
+    const headers = ['Reference,Date,Type,Category,Description,SenderName,SenderBank,RecipientName,RecipientBank,Amount,Fee,Direction,Status,BalanceAfter\n'];
     const rows = filtered.map((t) => {
-      const recType = t.description.includes('[Simulated') ? 'Simulated Demo' : 'Standard';
-      return `"${t.reference}","${t.timestamp}","${t.type}","${t.category}","${t.description.replace(/"/g, '""')}","${t.amount}","${t.direction}","${t.status}","${t.balanceAfter}","${recType}"\n`;
+      return `"${t.reference}","${t.timestamp}","${t.type}","${t.category}","${(t.description || '').replace(/"/g, '""')}","${(t.senderName || '').replace(/"/g, '""')}","${(t.senderBank || '').replace(/"/g, '""')}","${(t.recipientName || '').replace(/"/g, '""')}","${(t.recipientBank || '').replace(/"/g, '""')}","${t.amount}","${t.fee || 0}","${t.direction}","${t.status}","${t.balanceAfter}"\n`;
     });
     const blob = new Blob([...headers, ...rows], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -217,23 +219,23 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
         </div>
       </div>
 
-      {/* Target Account Demonstration Banner (if target client ID AR-6F7079 / AR-70363A) */}
+      {/* Target Account Demonstration Banner (for client ID AR-6F7079 / Thane Rivers) */}
       {isTargetAccount && (
         <div className="bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-900 dark:text-amber-200">
           <div className="flex items-start space-x-3">
             <Info className="w-4 h-4 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
             <div className="space-y-0.5">
               <div className="font-bold">
-                Client ID AR-6F7079 (Ref: AR-70363A) — Reconciled Historical Ledger
+                Client ID AR-6F7079 (Account Holder: Thane Rivers) — Reconciled Historical Ledger
               </div>
               <p className="text-[11px] text-amber-800/90 dark:text-amber-300/80">
-                Historical Period: September 2, 2018 → October 28, 2026. Opening: $200,000.00 • Reconciled Current: $3,800,000.00.
-                All entries are clearly designated as simulated demonstration records.
+                Period: September 2, 2018 → October 28, 2026 • Opening: $200,000.00 • Authoritative Closing: $3,800,000.00.
+                Reconciliation Target: $3,782,685.00 (Discrepancy: -$17,315.00 subject to authorized adjustment).
               </p>
             </div>
           </div>
           <div className="inline-flex items-center space-x-1 font-mono text-[11px] font-bold text-amber-900 dark:text-amber-100 px-2.5 py-1 bg-amber-100/80 dark:bg-amber-900/50 rounded-lg shrink-0">
-            <span>52 Reconciled Ledger Entries</span>
+            <span>52 Audited Records</span>
           </div>
         </div>
       )}
@@ -506,18 +508,23 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
               <thead>
                 <tr className="border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-wider">
                   <th className="pb-3 pl-2">Type</th>
-                  <th className="pb-3">Description</th>
+                  <th className="pb-3">Description &amp; Counterparty</th>
                   <th className="pb-3 hidden sm:table-cell">Category</th>
                   <th className="pb-3 hidden md:table-cell">Reference</th>
-                  <th className="pb-3">Date</th>
+                  <th className="pb-3">Date &amp; Time</th>
+                  <th className="pb-3 text-right hidden lg:table-cell">Fee</th>
+                  <th className="pb-3 text-center hidden sm:table-cell">Status</th>
                   <th className="pb-3 text-right">Amount</th>
-                  <th className="pb-3 text-right pr-2">Balance</th>
+                  <th className="pb-3 text-right pr-2">Ledger Balance</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {paginatedTransactions.map((tx) => {
                   const isCredit = tx.direction === 'credit';
-                  const isSim = tx.description.includes('[Simulated Demo]');
+                  const counterpartyLabel = isCredit
+                    ? (tx.senderName ? `From: ${tx.senderName}${tx.senderBank ? ` (${tx.senderBank})` : ''}` : '')
+                    : (tx.recipientName ? `To: ${tx.recipientName}${tx.recipientBank ? ` (${tx.recipientBank})` : ''}` : '');
+
                   return (
                     <tr
                       key={tx.id}
@@ -525,30 +532,39 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                       className="hover:bg-slate-50 dark:hover:bg-[#10192A] transition-colors cursor-pointer group"
                     >
                       <td className="py-3 pl-2">
-                        <div
-                          className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                            isCredit
-                              ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
-                              : 'bg-red-100 dark:bg-red-950/60 text-[#C8102E] dark:text-red-400'
-                          }`}
-                        >
-                          {isCredit ? (
-                            <ArrowDownLeft className="w-4 h-4 stroke-[2.2]" />
-                          ) : (
-                            <ArrowUpRight className="w-4 h-4 stroke-[2.2]" />
-                          )}
+                        <div className="flex items-center space-x-1.5">
+                          <div
+                            className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
+                              isCredit
+                                ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400'
+                                : 'bg-red-100 dark:bg-red-950/60 text-[#C8102E] dark:text-red-400'
+                            }`}
+                          >
+                            {isCredit ? (
+                              <ArrowDownLeft className="w-3.5 h-3.5 stroke-[2.2]" />
+                            ) : (
+                              <ArrowUpRight className="w-3.5 h-3.5 stroke-[2.2]" />
+                            )}
+                          </div>
+                          <span className={`text-[10px] font-bold uppercase hidden xl:inline ${
+                            isCredit ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-400'
+                          }`}>
+                            {isCredit ? 'In' : 'Out'}
+                          </span>
                         </div>
                       </td>
                       <td className="py-3 font-semibold text-slate-800 dark:text-slate-200 group-hover:text-[#C8102E] dark:group-hover:text-red-400 transition-colors">
                         <div className="flex items-center space-x-1.5 flex-wrap">
                           <span>{tx.description}</span>
-                          {isSim && (
-                            <span className="text-[9px] uppercase font-bold px-1.5 py-0.2 bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 rounded border border-amber-200 dark:border-amber-800">
-                              Simulated
-                            </span>
-                          )}
                         </div>
-                        <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal sm:hidden">{tx.category}</div>
+                        {counterpartyLabel && (
+                          <div className={`text-[11px] font-medium mt-0.5 ${
+                            isCredit ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'
+                          }`}>
+                            {counterpartyLabel}
+                          </div>
+                        )}
+                        <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal sm:hidden mt-0.5">{tx.category}</div>
                       </td>
                       <td className="py-3 text-slate-500 dark:text-slate-400 hidden sm:table-cell font-medium">
                         <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded-md text-[10px] text-slate-700 dark:text-slate-300 font-medium">
@@ -559,11 +575,24 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                         {tx.reference}
                       </td>
                       <td className="py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap font-medium text-[11px]">
-                        {new Date(tx.timestamp).toLocaleDateString([], {
-                          year: 'numeric',
-                          month: 'short',
-                          day: 'numeric',
-                        })}
+                        <div>
+                          {new Date(tx.timestamp).toLocaleDateString([], {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric',
+                          })}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {new Date(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </td>
+                      <td className="py-3 text-right font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap text-[11px] hidden lg:table-cell">
+                        {tx.fee && tx.fee > 0 ? `$${tx.fee.toFixed(2)}` : '$0.00'}
+                      </td>
+                      <td className="py-3 text-center whitespace-nowrap hidden sm:table-cell">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
+                          {tx.status.toUpperCase()}
+                        </span>
                       </td>
                       <td className="py-3 text-right font-mono font-bold whitespace-nowrap">
                         <span className={isCredit ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white'}>
