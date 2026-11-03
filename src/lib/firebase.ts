@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from 'firebase/auth';
 import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 import rawConfig from '../../firebase-applet-config.json';
@@ -21,8 +21,11 @@ export const app = initializeApp(firebaseConfig);
 // Initialize Firestore with specific database ID (CRITICAL: Required for multi-database configurations)
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
-// Initialize Firebase Authentication
+// Initialize Firebase Authentication with explicit persistent local session
 export const auth = getAuth(app);
+setPersistence(auth, browserLocalPersistence).catch((err) => {
+  console.warn('Firebase browserLocalPersistence configuration note:', err);
+});
 
 // Initialize Firebase Cloud Storage
 export const storage = getStorage(app);

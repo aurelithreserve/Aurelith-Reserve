@@ -8,12 +8,14 @@ import { BrandLogo } from '../common/BrandLogo';
 
 interface SignInPageProps {
   onSuccess: () => void;
+  onNavigateCipher?: () => void;
   onNavigateRegister: () => void;
   onNavigateHome: () => void;
 }
 
 export const SignInPage: React.FC<SignInPageProps> = ({
   onSuccess,
+  onNavigateCipher,
   onNavigateRegister,
   onNavigateHome,
 }) => {
@@ -26,7 +28,6 @@ export const SignInPage: React.FC<SignInPageProps> = ({
   } = useBankingAuth();
 
   const [identifier, setIdentifier] = useState('');
-  const [governmentId, setGovernmentId] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -44,19 +45,27 @@ export const SignInPage: React.FC<SignInPageProps> = ({
     setErrorMessage('');
 
     const trimmedId = identifier.trim();
-    const trimmedGov = governmentId.trim();
 
-    if ((!trimmedId && !trimmedGov) || !password) {
-      setErrorMessage('Please provide your email, phone, or Government Identification and password.');
+    if (!trimmedId || !password) {
+      setErrorMessage('Please enter your Email Address or Phone Number and Password.');
       return;
     }
 
     setLoading(true);
 
     try {
-      const res = await login(trimmedId || trimmedGov, password, trimmedGov || undefined);
+      const res = await login(trimmedId, password);
       if (!res.requireDeviceVerification) {
-        onSuccess();
+        if (res.user?.role === 'cipher' || res.isCipher) {
+          if (onNavigateCipher) {
+            onNavigateCipher();
+          } else {
+            window.history.pushState(null, '', '/cipher');
+            window.dispatchEvent(new PopStateEvent('popstate'));
+          }
+        } else {
+          onSuccess();
+        }
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Invalid credentials. Please verify your details.');
@@ -87,7 +96,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
     }
   };
 
-  const isFormComplete = Boolean(identifier.trim() && governmentId.trim() && password.trim());
+  const isFormComplete = Boolean(identifier.trim() && password.trim());
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-[#0B111E] text-slate-900 dark:text-slate-100 flex flex-col justify-between py-8 px-4 sm:px-6 lg:px-8 selection:bg-red-100 selection:text-red-900 transition-colors duration-200">
@@ -117,11 +126,11 @@ export const SignInPage: React.FC<SignInPageProps> = ({
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Identifier: Email OR Phone */}
+            {/* Field 1: Email Address or Phone Number */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-xs font-bold text-[#1C2B4C] dark:text-slate-200 uppercase tracking-wider">
-                  Email or Phone Number
+                  Email Address or Phone Number
                 </label>
                 <span className="text-[10px] text-slate-400 dark:text-slate-400 font-medium">
                   {isEmail ? 'Detected: Email' : identifier.length > 3 ? 'Detected: Phone' : 'Accepted'}
@@ -144,29 +153,7 @@ export const SignInPage: React.FC<SignInPageProps> = ({
               </div>
             </div>
 
-            {/* Government Identification */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-bold text-[#1C2B4C] dark:text-slate-200 uppercase tracking-wider">
-                  Government Identification
-                </label>
-                <span className="text-[10px] text-slate-400 dark:text-slate-500 font-medium">
-                  SSN, Driver's License, or State ID
-                </span>
-              </div>
-              <div className="relative">
-                <ShieldCheck className="absolute left-3.5 top-3 w-4 h-4 text-slate-400 pointer-events-none" />
-                <input
-                  type="text"
-                  placeholder="Enter SSN, Driver's License, or State ID"
-                  value={governmentId}
-                  onChange={(e) => setGovernmentId(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 placeholder:text-slate-400 rounded-xl text-base sm:text-sm font-medium focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
-                />
-              </div>
-            </div>
-
-            {/* Password */}
+            {/* Field 2: Password */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-xs font-bold text-[#1C2B4C] dark:text-slate-200 uppercase tracking-wider">

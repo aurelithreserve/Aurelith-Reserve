@@ -266,6 +266,7 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
 ];
 
 export const KNOWN_VERIFIED_RECIPIENTS: Record<string, { recipientName: string; bankName: string; routingNumber: string; swiftCode: string; accountType: string }> = {
+  // JPMorgan Chase Bank
   '9843210091': {
     recipientName: 'Lone Star Energy & Utilities LLC',
     bankName: 'JPMorgan Chase Bank, N.A.',
@@ -286,6 +287,194 @@ export const KNOWN_VERIFIED_RECIPIENTS: Record<string, { recipientName: string; 
     routingNumber: '111000614',
     swiftCode: 'CHASUS33',
     accountType: 'Private Wealth Management Account',
+  },
+
+  // Bank of America
+  '3820194021': {
+    recipientName: 'Sarah Jenkins',
+    bankName: 'Bank of America, N.A.',
+    routingNumber: '111000025',
+    swiftCode: 'BOFAUS3N',
+    accountType: 'Advantage Banking Checking',
+  },
+  '5920194820': {
+    recipientName: 'Dallas Metro Logistics Inc',
+    bankName: 'Bank of America, N.A.',
+    routingNumber: '111000025',
+    swiftCode: 'BOFAUS3N',
+    accountType: 'Commercial Treasury Operating Account',
+  },
+  '1928401928': {
+    recipientName: 'Robert E. Montgomery',
+    bankName: 'Bank of America, N.A.',
+    routingNumber: '111000025',
+    swiftCode: 'BOFAUS3N',
+    accountType: 'Private Client Account',
+  },
+
+  // Wells Fargo
+  '6019284019': {
+    recipientName: 'Elena Rostova',
+    bankName: 'Wells Fargo Bank, N.A.',
+    routingNumber: '111900659',
+    swiftCode: 'WFBIUS6S',
+    accountType: 'Prime Checking Account',
+  },
+  '7829104928': {
+    recipientName: 'Preston Hollow Family Trust',
+    bankName: 'Wells Fargo Bank, N.A.',
+    routingNumber: '111900659',
+    swiftCode: 'WFBIUS6S',
+    accountType: 'Fiduciary & Estate Account',
+  },
+  '3910294819': {
+    recipientName: 'Summit Ridge Properties LLC',
+    bankName: 'Wells Fargo Bank, N.A.',
+    routingNumber: '111900659',
+    swiftCode: 'WFBIUS6S',
+    accountType: 'Commercial Real Estate Escrow',
+  },
+
+  // Citibank
+  '8492019482': {
+    recipientName: 'David K. Sterling',
+    bankName: 'Citibank, N.A.',
+    routingNumber: '021000089',
+    swiftCode: 'CITIUS33',
+    accountType: 'Citi Priority Checking',
+  },
+  '1948201948': {
+    recipientName: 'Continental Export Corp',
+    bankName: 'Citibank, N.A.',
+    routingNumber: '021000089',
+    swiftCode: 'CITIUS33',
+    accountType: 'International Trade Operating Account',
+  },
+
+  // PNC Bank
+  '5520194821': {
+    recipientName: 'Apex Real Estate Acquisitions',
+    bankName: 'PNC Bank, N.A.',
+    routingNumber: '043000096',
+    swiftCode: 'PNCBUS33',
+    accountType: 'Commercial Operating Account',
+  },
+
+  // Capital One
+  '7192048192': {
+    recipientName: 'Chloe Bennett',
+    bankName: 'Capital One, N.A.',
+    routingNumber: '051405515',
+    swiftCode: 'HIBKUS44',
+    accountType: '360 Checking Account',
+  },
+
+  // U.S. Bank
+  '8819204819': {
+    recipientName: 'Jordan Taylor',
+    bankName: 'U.S. Bank National Association',
+    routingNumber: '091000022',
+    swiftCode: 'USBKUS44',
+    accountType: 'Bank Smartly Checking',
+  },
+
+  // Truist
+  '4910294810': {
+    recipientName: 'Austin Tech Ventures LLC',
+    bankName: 'Truist Bank',
+    routingNumber: '061000104',
+    swiftCode: 'SNTRUS3A',
+    accountType: 'Commercial Checking',
+  },
+
+  // Goldman Sachs Bank
+  '9281049281': {
+    recipientName: 'Horizon Global Capital Partners',
+    bankName: 'Goldman Sachs Bank USA',
+    routingNumber: '121144994',
+    swiftCode: 'GSNYUS33',
+    accountType: 'Private Wealth Prime Custody',
+  },
+
+  // Morgan Stanley
+  '3049182049': {
+    recipientName: 'Victoria Hamilton-Cross',
+    bankName: 'Morgan Stanley Private Bank, N.A.',
+    routingNumber: '026013576',
+    swiftCode: 'MSNYUS33',
+    accountType: 'Private Client Reserve',
+  },
+
+  // Barclays Bank UK
+  '40192841': {
+    recipientName: 'Alistair Sterling',
+    bankName: 'Barclays Bank UK PLC',
+    routingNumber: '20-00-00',
+    swiftCode: 'BARCGB22',
+    accountType: 'Barclays Premier Current Account',
+  },
+
+  // HSBC UK
+  '81920482': {
+    recipientName: 'Evelyn St. Claire',
+    bankName: 'HSBC UK Bank plc',
+    routingNumber: '40-05-15',
+    swiftCode: 'HBUKGB41',
+    accountType: 'HSBC Premier Account',
+  },
+
+  // Royal Bank of Canada
+  '102948102': {
+    recipientName: 'Kensington Northern Advisory Corp',
+    bankName: 'Royal Bank of Canada',
+    routingNumber: '00002-003',
+    swiftCode: 'ROYCCAT2',
+    accountType: 'RBC Commercial Operating Account',
+  },
+
+  // UBS Switzerland
+  '9204810293': {
+    recipientName: 'Geneva Asset Management SA',
+    bankName: 'UBS Switzerland AG',
+    routingNumber: '00230',
+    swiftCode: 'UBSWCHZH',
+    accountType: 'International Wealth Reserve',
+  },
+
+  // Deutsche Bank
+  '5029104920': {
+    recipientName: 'Klaus Lindemann',
+    bankName: 'Deutsche Bank AG',
+    routingNumber: '50070010',
+    swiftCode: 'DEUTDEDD',
+    accountType: 'Private Banking Girokonto',
+  },
+
+  // DBS Bank Singapore
+  '0039102948': {
+    recipientName: 'Pacific Maritime Logistics Pte Ltd',
+    bankName: 'DBS Bank Ltd',
+    routingNumber: '7171-001',
+    swiftCode: 'DBSSSGSG',
+    accountType: 'Corporate Treasury Account',
+  },
+
+  // Emirates NBD
+  '1019284019': {
+    recipientName: 'Sheikh Tariq Al-Mansoor',
+    bankName: 'Emirates NBD Bank PJSC',
+    routingNumber: '026',
+    swiftCode: 'EBILAEAD',
+    accountType: 'Priority Banking Wealth Account',
+  },
+
+  // Aurelith Reserve Clients
+  '1100609230': {
+    recipientName: 'Aurelith Reserve Concierge Vault',
+    bankName: 'Aurelith Reserve',
+    routingNumber: '111301122',
+    swiftCode: 'AURUS33D',
+    accountType: 'Aurelith Premier Checking',
   },
   '1029384756': {
     recipientName: 'Aurelith Primary Account Holder',

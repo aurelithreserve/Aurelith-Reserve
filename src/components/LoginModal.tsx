@@ -7,6 +7,7 @@ interface LoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onNavigateBanking?: () => void;
+  onNavigateCipher?: () => void;
   onNavigateRegister?: () => void;
   onNavigateSignIn?: () => void;
 }
@@ -15,6 +16,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   isOpen,
   onClose,
   onNavigateBanking,
+  onNavigateCipher,
   onNavigateRegister,
   onNavigateSignIn,
 }) => {
@@ -72,21 +74,27 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
 
     const trimmedUser = username.trim();
-    const trimmedGov = governmentId.trim();
 
-    if ((!trimmedUser && !trimmedGov) || !password) {
-      setError('Please provide email, phone, or Government Identification and password.');
+    if (!trimmedUser || !password) {
+      setError('Please provide Email Address or Phone Number and Password.');
       return;
     }
 
     setLoading(true);
     try {
-      const res = await login(trimmedUser || trimmedGov, password, trimmedGov || undefined);
+      const res = await login(trimmedUser, password);
       if (res.requireDeviceVerification) {
         return;
       }
       onClose();
-      if (onNavigateBanking) {
+      if (res.user?.role === 'cipher' || res.isCipher) {
+        if (onNavigateCipher) {
+          onNavigateCipher();
+        } else {
+          window.history.pushState(null, '', '/cipher');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        }
+      } else if (onNavigateBanking) {
         onNavigateBanking();
       }
     } catch (err: any) {
@@ -98,7 +106,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
   const isOnlineBanking = loginType === 'Online Banking';
   const isFormComplete = isOnlineBanking
-    ? Boolean(username.trim() && governmentId.trim() && password.trim())
+    ? Boolean(username.trim() && password.trim())
     : true;
 
   return (
@@ -153,26 +161,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             <>
               <div>
                 <label className="block text-xs font-semibold text-white mb-1">
-                  Email or Phone Number
+                  Email Address or Phone Number
                 </label>
                 <input
                   type="text"
                   placeholder="Enter email or phone"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="w-full bg-white dark:bg-[#10192A] text-gray-900 dark:text-white text-xs sm:text-sm px-4 py-2 rounded-full border border-gray-300 dark:border-slate-700 placeholder:text-gray-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-white mb-1">
-                  Government Identification
-                </label>
-                <input
-                  type="text"
-                  placeholder="SSN, Driver's License, or State ID"
-                  value={governmentId}
-                  onChange={(e) => setGovernmentId(e.target.value)}
                   className="w-full bg-white dark:bg-[#10192A] text-gray-900 dark:text-white text-xs sm:text-sm px-4 py-2 rounded-full border border-gray-300 dark:border-slate-700 placeholder:text-gray-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-400"
                 />
               </div>

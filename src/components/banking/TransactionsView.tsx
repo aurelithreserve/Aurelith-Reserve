@@ -8,23 +8,20 @@ import {
   FileText,
   ArrowLeft,
   Calendar,
-  ChevronDown,
-  ChevronUp,
-  BarChart3,
-  ShieldAlert,
   ChevronLeft,
   ChevronRight,
-  Info,
+  AlertCircle,
+  RotateCcw,
+  Filter as FilterIcon,
 } from 'lucide-react';
 import { useBankingAuth } from '../../context/BankingAuthContext';
 import { BankTransaction } from '../../types/banking';
 import { BankingTab } from './BankingLayout';
 import {
-  calculateYearlyLedgerSummaries,
-  TARGET_CLIENT_ID,
-  ACTUAL_CLIENT_ID,
-  INITIAL_OPENING_BALANCE,
-} from '../../data/simulatedLedgerAR6F7079';
+  exportTransactionsCsv,
+  exportTransactionsPdf,
+  formatUtcDateTime,
+} from '../../utils/transactionHistoryExport';
 
 interface TransactionsViewProps {
   onOpenDetails: (tx: BankTransaction) => void;
@@ -40,51 +37,64 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
   const { transactions, user } = useBankingAuth();
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [directionFilter, setDirectionFilter] = useState<'all' | 'debit' | 'credit'>('all');
-  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'amount_high'>('newest');
 
-  // Date Range Filtering
-  const [startDateFilter, setStartDateFilter] = useState('');
-  const [endDateFilter, setEndDateFilter] = useState('');
+  // Date Range input state (interactive form fields)
+  const [startDateInput, setStartDateInput] = useState('');
+  const [endDateInput, setEndDateInput] = useState('');
 
-  // Expandable Yearly Summary Ledger
-  const [showYearlySummary, setShowYearlySummary] = useState(false);
+  // Applied Date Range state (updated strictly upon clicking the Filter button)
+  const [appliedStartDate, setAppliedStartDate] = useState('');
+  const [appliedEndDate, setAppliedEndDate] = useState('');
+  const [dateError, setDateError] = useState('');
 
   // Pagination Controls
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(20);
 
-  // Check if viewing target client accounts
-  const isTarget60FCE0 = user?.clientId === 'AR-60FCE0';
-  const isTargetAR6F7079 =
-    user?.clientId === 'AR-70363A' ||
-    user?.clientId === 'AR-6F7079' ||
-    user?.firstName === 'Thane';
-  const isTargetAccount = isTargetAR6F7079 || isTarget60FCE0;
+  // Apply Filter Action
+  const handleApplyFilter = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (startDateInput && endDateInput && startDateInput > endDateInput) {
+      setDateError('Start date must be before or equal to end date.');
+      return;
+    }
+    setDateError('');
+    setAppliedStartDate(startDateInput);
+    setAppliedEndDate(endDateInput);
+    setCurrentPage(1);
+  };
 
-  // Categories present in transactions
-  const categories = Array.from(new Set(transactions.map((t) => t.category)));
+  // Reset / Clear Filter Action
+  const handleResetFilter = () => {
+    setStartDateInput('');
+    setEndDateInput('');
+    setAppliedStartDate('');
+    setAppliedEndDate('');
+    setDateError('');
+    setSearchTerm('');
+    setCurrentPage(1);
+  };
 
-  // Filtered & Sorted Transactions
+  // Filtered & Chronologically Sorted Transactions
   const filtered = useMemo(() => {
     return transactions
       .filter((t) => {
-        if (directionFilter !== 'all' && t.direction !== directionFilter) return false;
-        if (categoryFilter !== 'all' && t.category !== categoryFilter) return false;
-        if (startDateFilter) {
+        // Date range filtering
+        if (appliedStartDate) {
           const txDate = t.timestamp.slice(0, 10);
-          if (txDate < startDateFilter) return false;
+          if (txDate < appliedStartDate) return false;
         }
-        if (endDateFilter) {
+        if (appliedEndDate) {
           const txDate = t.timestamp.slice(0, 10);
-          if (txDate > endDateFilter) return false;
+          if (txDate > appliedEndDate) return false;
         }
+
+        // Search query filtering
         if (searchTerm.trim()) {
           const q = searchTerm.toLowerCase();
           return (
             t.description.toLowerCase().includes(q) ||
-            t.category.toLowerCase().includes(q) ||
             t.reference.toLowerCase().includes(q) ||
             (t.senderName && t.senderName.toLowerCase().includes(q)) ||
             (t.senderBank && t.senderBank.toLowerCase().includes(q)) ||
@@ -95,21 +105,24 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
         return true;
       })
       .sort((a, b) => {
-        if (sortBy === 'newest') return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-        if (sortBy === 'oldest') return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-        if (sortBy === 'amount_high') return b.amount - a.amount;
-        return 0;
-      });
-  }, [transactions, directionFilter, categoryFilter, startDateFilter, endDateFilter, searchTerm, sortBy]);
+        const timeA = new Date(a.timestamp).getTime();
+        const timeB = new Date(b.timestamp).getTime();
 
-  // Derived Yearly Summaries from Ledger
-  const yearlySummaries = useMemo(() => {
-    const openingBal = isTarget60FCE0 ? 250000.00 : (isTargetAR6F7079 ? INITIAL_OPENING_BALANCE : (transactions[transactions.length - 1]?.balanceAfter || 0));
-    return calculateYearlyLedgerSummaries(
-      transactions,
-      openingBal
-    );
-  }, [transactions, isTarget60FCE0, isTargetAR6F7079]);
+        if (sortBy === 'newest') {
+          if (timeB !== timeA) return timeB - timeA;
+          return b.reference.localeCompare(a.reference);
+        }
+        if (sortBy === 'oldest') {
+          if (timeA !== timeB) return timeA - timeB;
+          return a.reference.localeCompare(b.reference);
+        }
+        if (sortBy === 'amount_high') {
+          if (b.amount !== a.amount) return b.amount - a.amount;
+          return timeB - timeA;
+        }
+        return timeB - timeA;
+      });
+  }, [transactions, appliedStartDate, appliedEndDate, searchTerm, sortBy]);
 
   // Paginated Slicing
   const totalPages = pageSize === -1 ? 1 : Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -119,38 +132,29 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     return filtered.slice(startIdx, startIdx + pageSize);
   }, [filtered, currentPage, pageSize]);
 
-  // Handle Preset Ranges
-  const handleSetPreset = (preset: 'all' | '2018-2026' | '2026' | 'last30') => {
-    setCurrentPage(1);
-    if (preset === 'all') {
-      setStartDateFilter('');
-      setEndDateFilter('');
-    } else if (preset === '2018-2026') {
-      setStartDateFilter('2018-09-02');
-      setEndDateFilter('2026-10-28');
-    } else if (preset === '2026') {
-      setStartDateFilter('2026-01-01');
-      setEndDateFilter('2026-10-28');
-    } else if (preset === 'last30') {
-      const now = new Date();
-      const past = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-      setStartDateFilter(past.toISOString().slice(0, 10));
-      setEndDateFilter(now.toISOString().slice(0, 10));
+  // Reporting period descriptor for exports
+  const reportingPeriod = useMemo(() => {
+    if (appliedStartDate && appliedEndDate) {
+      return `${appliedStartDate} to ${appliedEndDate}`;
     }
+    if (appliedStartDate) {
+      return `From ${appliedStartDate}`;
+    }
+    if (appliedEndDate) {
+      return `Until ${appliedEndDate}`;
+    }
+    return 'All Available Records';
+  }, [appliedStartDate, appliedEndDate]);
+
+  // Export PDF (strictly omits account balance per privacy guidelines)
+  const handleExportPdf = () => {
+    const fullName = user ? `${user.firstName} ${user.lastName}` : undefined;
+    exportTransactionsPdf(filtered, reportingPeriod, fullName);
   };
 
-  const exportCSV = () => {
-    const headers = ['Reference,Date,Type,Category,Description,SenderName,SenderBank,RecipientName,RecipientBank,Amount,Fee,Direction,Status,BalanceAfter\n'];
-    const rows = filtered.map((t) => {
-      return `"${t.reference}","${t.timestamp}","${t.type}","${t.category}","${(t.description || '').replace(/"/g, '""')}","${(t.senderName || '').replace(/"/g, '""')}","${(t.senderBank || '').replace(/"/g, '""')}","${(t.recipientName || '').replace(/"/g, '""')}","${(t.recipientBank || '').replace(/"/g, '""')}","${t.amount}","${t.fee || 0}","${t.direction}","${t.status}","${t.balanceAfter}"\n`;
-    });
-    const blob = new Blob([...headers, ...rows], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Aurelith_Reserve_Ledger_${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+  // Export CSV (strictly omits account balance per privacy guidelines)
+  const handleExportCsv = () => {
+    exportTransactionsCsv(filtered);
   };
 
   const handleGoToStatements = () => {
@@ -161,9 +165,11 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
     }
   };
 
+  const isFiltered = Boolean(appliedStartDate || appliedEndDate || searchTerm.trim());
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6 animate-fadeIn">
-      {/* Title & Actions Bar */}
+    <div className="max-w-5xl mx-auto space-y-6 animate-fadeIn">
+      {/* 1. Header Bar & Navigation */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200 dark:border-slate-800">
         <div>
           {onSelectTab && (
@@ -175,370 +181,188 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
               <span>Back to Home</span>
             </button>
           )}
-          <div className="flex items-center space-x-2">
-            <h1 className="text-2xl font-bold tracking-tight text-[#1C2B4C] dark:text-white">Transaction Ledger</h1>
-            {isTarget60FCE0 && (
-              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 rounded border border-amber-300 dark:border-amber-800">
-                Audited Ledger • AR-60FCE0
-              </span>
-            )}
-            {isTargetAR6F7079 && (
-              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 rounded border border-amber-300 dark:border-amber-800">
-                Demo Ledger • AR-6F7079
-              </span>
-            )}
-          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-[#1C2B4C] dark:text-white">Transaction History</h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Real-time audit log of all debits, deposits, transfers, allocations, and custodial charges.
+            Verified electronic records and settlement history.
           </p>
         </div>
 
+        {/* Action Buttons: PDF & CSV Exports */}
         <div className="flex items-center space-x-2">
-          {/* Yearly Summaries Toggle */}
-          <button
-            onClick={() => setShowYearlySummary((prev) => !prev)}
-            className={`inline-flex items-center space-x-1.5 px-3 py-2 text-xs font-bold rounded-full transition-colors cursor-pointer border ${
-              showYearlySummary
-                ? 'bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700'
-                : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300 dark:border-slate-700 hover:bg-slate-50'
-            }`}
-          >
-            <BarChart3 className="w-3.5 h-3.5" />
-            <span>Yearly Summaries</span>
-            {showYearlySummary ? <ChevronUp className="w-3.5 h-3.5 ml-0.5" /> : <ChevronDown className="w-3.5 h-3.5 ml-0.5" />}
-          </button>
-
-          {/* Account Statement Action */}
           <button
             onClick={handleGoToStatements}
-            className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#1C2B4C] hover:bg-[#152033] dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-xs font-bold rounded-full transition-colors cursor-pointer shadow-xs active:scale-95"
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-full transition-colors cursor-pointer"
           >
-            <FileText className="w-4 h-4 text-white" />
-            <span>Account Statement</span>
+            <FileText className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" />
+            <span>Statements</span>
           </button>
-
           <button
-            onClick={exportCSV}
-            className="inline-flex items-center space-x-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-full transition-colors cursor-pointer"
+            onClick={handleExportPdf}
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#1C2B4C] hover:bg-[#152033] dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-xs font-bold rounded-full transition-colors cursor-pointer shadow-xs active:scale-95"
           >
-            <Download className="w-4 h-4 text-slate-600 dark:text-slate-400" />
+            <Download className="w-3.5 h-3.5 text-white" />
+            <span>Export PDF</span>
+          </button>
+          <button
+            onClick={handleExportCsv}
+            className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-full transition-colors cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5 text-slate-600 dark:text-slate-400" />
             <span>Export CSV</span>
           </button>
         </div>
       </div>
 
-      {/* Account Audit Banner (for client ID AR-60FCE0) */}
-      {isTarget60FCE0 && (
-        <div className="bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-emerald-900 dark:text-emerald-200">
-          <div className="flex items-start space-x-3">
-            <Info className="w-4 h-4 text-emerald-700 dark:text-emerald-400 shrink-0 mt-0.5" />
-            <div className="space-y-0.5">
-              <div className="font-bold">
-                Client ID AR-60FCE0 (Account Holder: Aurelith Reserve) — Reconciled Historical Ledger
-              </div>
-              <p className="text-[11px] text-emerald-800/90 dark:text-emerald-300/80">
-                Period: January 15, 2019 → October 28, 2026 • Opening: $250,000.00 • Reconciled Closing Balance: $3,867,235.00.
-                Ledger reconciles to target balance with zero variance ($0.00 discrepancy).
-              </p>
-            </div>
-          </div>
-          <div className="inline-flex items-center space-x-1 font-mono text-[11px] font-bold text-emerald-900 dark:text-emerald-100 px-2.5 py-1 bg-emerald-100/80 dark:bg-emerald-900/50 rounded-lg shrink-0">
-            <span>37 Audited Records</span>
-          </div>
-        </div>
-      )}
-
-      {/* Target Account Demonstration Banner (for client ID AR-6F7079 / Thane Rivers) */}
-      {isTargetAR6F7079 && (
-        <div className="bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-900 dark:text-amber-200">
-          <div className="flex items-start space-x-3">
-            <Info className="w-4 h-4 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
-            <div className="space-y-0.5">
-              <div className="font-bold">
-                Client ID AR-6F7079 (Account Holder: Thane Rivers) — Reconciled Historical Ledger
-              </div>
-              <p className="text-[11px] text-amber-800/90 dark:text-amber-300/80">
-                Period: September 2, 2018 → October 28, 2026 • Opening: $200,000.00 • Authoritative Closing: $3,800,000.00.
-                Reconciliation Target: $3,782,685.00 (Discrepancy: -$17,315.00 subject to authorized adjustment).
-              </p>
-            </div>
-          </div>
-          <div className="inline-flex items-center space-x-1 font-mono text-[11px] font-bold text-amber-900 dark:text-amber-100 px-2.5 py-1 bg-amber-100/80 dark:bg-amber-900/50 rounded-lg shrink-0">
-            <span>52 Audited Records</span>
-          </div>
-        </div>
-      )}
-
-      {/* Expandable Yearly Summaries Card */}
-      {showYearlySummary && (
-        <div className="bg-white dark:bg-[#152033] rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4 animate-fadeIn">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-            <div>
-              <h2 className="text-sm font-bold text-[#1C2B4C] dark:text-white flex items-center space-x-2">
-                <BarChart3 className="w-4 h-4 text-[#C8102E] dark:text-red-400" />
-                <span>Yearly Ledger Summaries &amp; Reconciliation Balance</span>
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Every year-end closing balance equals the succeeding year's opening balance, calculated dynamically from the underlying ledger.
-              </p>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs font-mono">
-              <thead>
-                <tr className="border-b border-slate-200 dark:border-slate-800 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  <th className="pb-2.5">Year</th>
-                  <th className="pb-2.5 text-right">Opening Balance</th>
-                  <th className="pb-2.5 text-right text-emerald-600 dark:text-emerald-400">Total Credits</th>
-                  <th className="pb-2.5 text-right text-red-600 dark:text-red-400">Total Debits</th>
-                  <th className="pb-2.5 text-right">Net Activity</th>
-                  <th className="pb-2.5 text-right font-bold text-slate-900 dark:text-white">Closing Balance</th>
-                  <th className="pb-2.5 text-center">Tx Count</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-[11px]">
-                {yearlySummaries.map((yr) => (
-                  <tr key={yr.year} className="hover:bg-slate-50 dark:hover:bg-[#10192A] transition-colors">
-                    <td className="py-2.5 font-bold text-slate-800 dark:text-slate-200">{yr.year}</td>
-                    <td className="py-2.5 text-right text-slate-600 dark:text-slate-300">
-                      ${yr.openingBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="py-2.5 text-right text-emerald-600 dark:text-emerald-400 font-semibold">
-                      +${yr.totalCredits.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      <span className="text-[9px] text-slate-400 ml-1">({yr.creditCount})</span>
-                    </td>
-                    <td className="py-2.5 text-right text-red-600 dark:text-red-400 font-semibold">
-                      -${yr.totalDebits.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      <span className="text-[9px] text-slate-400 ml-1">({yr.debitCount})</span>
-                    </td>
-                    <td className="py-2.5 text-right font-medium text-slate-700 dark:text-slate-300">
-                      {yr.netChange >= 0 ? '+' : '-'}${Math.abs(yr.netChange).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="py-2.5 text-right font-bold text-[#1C2B4C] dark:text-white">
-                      ${yr.closingBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </td>
-                    <td className="py-2.5 text-center text-slate-500 dark:text-slate-400 font-sans text-xs">
-                      {yr.transactionCount}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Filter & Controls Card */}
+      {/* 2. Simplified Date-Range Selection & Filter Area */}
       <div className="bg-white dark:bg-[#152033] rounded-3xl p-5 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
-        {/* Row 1: Search, Category, Sort */}
-        <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
-          {/* Search */}
-          <div className="sm:col-span-6 relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-            <input
-              type="text"
-              placeholder="Search description, reference, or category..."
-              value={searchTerm}
-              onChange={(e) => {
-                setSearchTerm(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-[#10192A] border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl text-xs font-medium focus:bg-white dark:focus:bg-[#0B111E] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
-            />
-          </div>
+        {/* Date Filter Controls Row */}
+        <form onSubmit={handleApplyFilter} className="space-y-3">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-3">
+            {/* Start Date & End Date Pickers */}
+            <div className="flex flex-wrap items-center gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase mb-1">
+                  Start Date
+                </label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={startDateInput}
+                    onChange={(e) => {
+                      setStartDateInput(e.target.value);
+                      if (dateError) setDateError('');
+                    }}
+                    className="px-3 py-2 bg-slate-50 dark:bg-[#10192A] border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-medium text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-[#0B111E] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                  />
+                </div>
+              </div>
 
-          {/* Category Filter */}
-          <div className="sm:col-span-3">
-            <select
-              value={categoryFilter}
-              onChange={(e) => {
-                setCategoryFilter(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full px-3 py-2 bg-slate-50 dark:bg-[#10192A] border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold focus:bg-white dark:focus:bg-[#0B111E] focus:outline-none cursor-pointer"
-            >
-              <option value="all">All Categories</option>
-              {categories.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 uppercase mb-1">
+                  End Date
+                </label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={endDateInput}
+                    onChange={(e) => {
+                      setEndDateInput(e.target.value);
+                      if (dateError) setDateError('');
+                    }}
+                    className="px-3 py-2 bg-slate-50 dark:bg-[#10192A] border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-medium text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-[#0B111E] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                  />
+                </div>
+              </div>
 
-          {/* Sort By */}
-          <div className="sm:col-span-3">
-            <select
-              value={sortBy}
-              onChange={(e) => {
-                setSortBy(e.target.value as any);
-                setCurrentPage(1);
-              }}
-              className="w-full px-3 py-2 bg-slate-50 dark:bg-[#10192A] border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-semibold focus:bg-white dark:focus:bg-[#0B111E] focus:outline-none cursor-pointer"
-            >
-              <option value="newest">Newest First</option>
-              <option value="oldest">Oldest First (Chronological)</option>
-              <option value="amount_high">Highest Amount</option>
-            </select>
-          </div>
-        </div>
+              {/* Dedicated Filter Button */}
+              <div className="pt-5 flex items-center space-x-2">
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-[#C8102E] hover:bg-[#A00B22] text-white text-xs font-bold rounded-xl shadow-xs transition-colors flex items-center space-x-1.5 cursor-pointer active:scale-95"
+                >
+                  <FilterIcon className="w-3.5 h-3.5" />
+                  <span>Filter</span>
+                </button>
 
-        {/* Row 2: Date-Range Filtering */}
-        <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center space-x-1.5 text-xs text-slate-600 dark:text-slate-300">
-              <Calendar className="w-3.5 h-3.5 text-slate-400" />
-              <span className="font-semibold">Date Range:</span>
+                {(startDateInput || endDateInput || appliedStartDate || appliedEndDate) && (
+                  <button
+                    type="button"
+                    onClick={handleResetFilter}
+                    className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs font-semibold rounded-xl transition-colors flex items-center space-x-1 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Clear</span>
+                  </button>
+                )}
+              </div>
             </div>
-            <input
-              type="date"
-              value={startDateFilter}
-              onChange={(e) => {
-                setStartDateFilter(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="px-2.5 py-1 bg-slate-50 dark:bg-[#10192A] border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-800 dark:text-slate-200 focus:outline-none"
-              placeholder="From"
-            />
-            <span className="text-slate-400 text-xs">to</span>
-            <input
-              type="date"
-              value={endDateFilter}
-              onChange={(e) => {
-                setEndDateFilter(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="px-2.5 py-1 bg-slate-50 dark:bg-[#10192A] border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-medium text-slate-800 dark:text-slate-200 focus:outline-none"
-              placeholder="To"
-            />
-            {(startDateFilter || endDateFilter) && (
-              <button
-                onClick={() => handleSetPreset('all')}
-                className="text-[11px] text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 underline cursor-pointer ml-1"
+
+            {/* Search & Sort Controls */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-[200px]">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  placeholder="Search records..."
+                  value={searchTerm}
+                  onChange={(e) => {
+                    setSearchTerm(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="w-full pl-8 pr-3 py-2 bg-slate-50 dark:bg-[#10192A] border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-medium text-slate-900 dark:text-white focus:bg-white dark:focus:bg-[#0B111E] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-600"
+                />
+              </div>
+
+              <select
+                value={sortBy}
+                onChange={(e) => {
+                  setSortBy(e.target.value as any);
+                  setCurrentPage(1);
+                }}
+                className="px-3 py-2 bg-slate-50 dark:bg-[#10192A] border border-slate-300 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none cursor-pointer"
               >
-                Clear
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+                <option value="amount_high">Highest Amount</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Inline Validation Error */}
+          {dateError && (
+            <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 rounded-xl text-red-700 dark:text-red-300 text-xs flex items-center space-x-2 animate-fadeIn">
+              <AlertCircle className="w-4 h-4 shrink-0 text-red-600 dark:text-red-400" />
+              <span>{dateError}</span>
+            </div>
+          )}
+
+          {/* Active Filter Status Indicator */}
+          {isFiltered && (
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-500 dark:text-slate-400 flex items-center justify-between">
+              <span>
+                Showing {filtered.length} matching record{filtered.length === 1 ? '' : 's'}
+                {appliedStartDate && appliedEndDate && ` between ${appliedStartDate} and ${appliedEndDate}`}
+                {appliedStartDate && !appliedEndDate && ` starting from ${appliedStartDate}`}
+                {!appliedStartDate && appliedEndDate && ` up to ${appliedEndDate}`}
+                {searchTerm.trim() && ` matching "${searchTerm}"`}
+              </span>
+              <button
+                type="button"
+                onClick={handleResetFilter}
+                className="text-xs font-semibold text-[#C8102E] hover:underline cursor-pointer"
+              >
+                Show all records
               </button>
-            )}
-          </div>
-
-          {/* Quick Date Presets */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              onClick={() => handleSetPreset('2018-2026')}
-              className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer ${
-                startDateFilter === '2018-09-02' && endDateFilter === '2026-10-28'
-                  ? 'bg-[#1C2B4C] dark:bg-slate-700 text-white'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-              }`}
-            >
-              2018–2026 Reconciled
-            </button>
-            <button
-              onClick={() => handleSetPreset('2026')}
-              className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer ${
-                startDateFilter === '2026-01-01' && endDateFilter === '2026-10-28'
-                  ? 'bg-[#1C2B4C] dark:bg-slate-700 text-white'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-              }`}
-            >
-              2026 YTD
-            </button>
-            <button
-              onClick={() => handleSetPreset('all')}
-              className={`px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer ${
-                !startDateFilter && !endDateFilter
-                  ? 'bg-[#1C2B4C] dark:bg-slate-700 text-white'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-              }`}
-            >
-              All Records
-            </button>
-          </div>
-        </div>
-
-        {/* Direction Switcher Pills */}
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold pt-1 border-t border-slate-100 dark:border-slate-800/80">
-          <div className="flex gap-2">
-            <button
-              onClick={() => {
-                setDirectionFilter('all');
-                setCurrentPage(1);
-              }}
-              className={`px-3 py-1 rounded-full transition-all cursor-pointer ${
-                directionFilter === 'all'
-                  ? 'bg-[#1C2B4C] dark:bg-slate-700 text-white shadow-xs'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
-            >
-              All Activity ({filtered.length})
-            </button>
-
-            <button
-              onClick={() => {
-                setDirectionFilter('credit');
-                setCurrentPage(1);
-              }}
-              className={`px-3 py-1 rounded-full transition-all cursor-pointer ${
-                directionFilter === 'credit'
-                  ? 'bg-emerald-600 dark:bg-emerald-700 text-white shadow-xs'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
-            >
-              Deposits &amp; Credits
-            </button>
-
-            <button
-              onClick={() => {
-                setDirectionFilter('debit');
-                setCurrentPage(1);
-              }}
-              className={`px-3 py-1 rounded-full transition-all cursor-pointer ${
-                directionFilter === 'debit'
-                  ? 'bg-[#C8102E] text-white shadow-xs'
-                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-              }`}
-            >
-              Withdrawals &amp; Debits
-            </button>
-          </div>
-
-          {/* Page Size Selector */}
-          <div className="flex items-center space-x-1.5 text-[11px] text-slate-500">
-            <span>Show:</span>
-            <select
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value));
-                setCurrentPage(1);
-              }}
-              className="bg-slate-50 dark:bg-[#10192A] border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-slate-700 dark:text-slate-300 focus:outline-none"
-            >
-              <option value={15}>15</option>
-              <option value={20}>20</option>
-              <option value={50}>50</option>
-              <option value={-1}>All ({filtered.length})</option>
-            </select>
-          </div>
-        </div>
+            </div>
+          )}
+        </form>
       </div>
 
-      {/* Ledger Table */}
+      {/* 3. Transaction Records Table */}
       <div className="bg-white dark:bg-[#152033] rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
         {filtered.length === 0 ? (
           <div className="text-center py-12 text-slate-400 dark:text-slate-500 space-y-2">
             <History className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600 stroke-[1.5]" />
-            <div className="text-sm font-semibold">No transactions match your query</div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">Try adjusting your date range, search criteria, or category filter.</p>
+            <div className="text-sm font-semibold">No records match your selected filter</div>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Please adjust your date range or search query.
+            </p>
+            {isFiltered && (
+              <button
+                onClick={handleResetFilter}
+                className="mt-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Show all records
+              </button>
+            )}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-slate-100 dark:border-slate-800 text-[11px] font-bold text-slate-400 dark:text-slate-400 uppercase tracking-wider">
-                  <th className="pb-3 pl-2">Type</th>
+                  <th className="pb-3 pl-2">Flow</th>
                   <th className="pb-3">Description &amp; Counterparty</th>
-                  <th className="pb-3 hidden sm:table-cell">Category</th>
                   <th className="pb-3 hidden md:table-cell">Reference</th>
                   <th className="pb-3">Date &amp; Time</th>
                   <th className="pb-3 text-right hidden lg:table-cell">Fee</th>
@@ -551,8 +375,14 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                 {paginatedTransactions.map((tx) => {
                   const isCredit = tx.direction === 'credit';
                   const counterpartyLabel = isCredit
-                    ? (tx.senderName ? `From: ${tx.senderName}${tx.senderBank ? ` (${tx.senderBank})` : ''}` : '')
-                    : (tx.recipientName ? `To: ${tx.recipientName}${tx.recipientBank ? ` (${tx.recipientBank})` : ''}` : '');
+                    ? tx.senderName
+                      ? `From: ${tx.senderName}${tx.senderBank ? ` (${tx.senderBank})` : ''}`
+                      : ''
+                    : tx.recipientName
+                    ? `To: ${tx.recipientName}${tx.recipientBank ? ` (${tx.recipientBank})` : ''}`
+                    : '';
+
+                  const { dateStr, timeStr } = formatUtcDateTime(tx.timestamp);
 
                   return (
                     <tr
@@ -575,9 +405,11 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                               <ArrowUpRight className="w-3.5 h-3.5 stroke-[2.2]" />
                             )}
                           </div>
-                          <span className={`text-[10px] font-bold uppercase hidden xl:inline ${
-                            isCredit ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-400'
-                          }`}>
+                          <span
+                            className={`text-[10px] font-bold uppercase hidden xl:inline ${
+                              isCredit ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-400'
+                            }`}
+                          >
                             {isCredit ? 'In' : 'Out'}
                           </span>
                         </div>
@@ -587,33 +419,21 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                           <span>{tx.description}</span>
                         </div>
                         {counterpartyLabel && (
-                          <div className={`text-[11px] font-medium mt-0.5 ${
-                            isCredit ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'
-                          }`}>
+                          <div
+                            className={`text-[11px] font-medium mt-0.5 ${
+                              isCredit ? 'text-emerald-700 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
                             {counterpartyLabel}
                           </div>
                         )}
-                        <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal sm:hidden mt-0.5">{tx.category}</div>
-                      </td>
-                      <td className="py-3 text-slate-500 dark:text-slate-400 hidden sm:table-cell font-medium">
-                        <span className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 rounded-md text-[10px] text-slate-700 dark:text-slate-300 font-medium">
-                          {tx.category}
-                        </span>
                       </td>
                       <td className="py-3 font-mono text-[11px] text-slate-400 dark:text-slate-500 hidden md:table-cell">
                         {tx.reference}
                       </td>
                       <td className="py-3 text-slate-500 dark:text-slate-400 whitespace-nowrap font-medium text-[11px]">
-                        <div>
-                          {new Date(tx.timestamp).toLocaleDateString([], {
-                            year: 'numeric',
-                            month: 'short',
-                            day: 'numeric',
-                          })}
-                        </div>
-                        <div className="text-[10px] text-slate-400">
-                          {new Date(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
+                        <div>{dateStr}</div>
+                        {timeStr && <div className="text-[10px] text-slate-400">{timeStr}</div>}
                       </td>
                       <td className="py-3 text-right font-mono text-slate-500 dark:text-slate-400 whitespace-nowrap text-[11px] hidden lg:table-cell">
                         {tx.fee && tx.fee > 0 ? `$${tx.fee.toFixed(2)}` : '$0.00'}
@@ -625,11 +445,19 @@ export const TransactionsView: React.FC<TransactionsViewProps> = ({
                       </td>
                       <td className="py-3 text-right font-mono font-bold whitespace-nowrap">
                         <span className={isCredit ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white'}>
-                          {isCredit ? '+' : '-'}${tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {isCredit ? '+' : '-'}$
+                          {tx.amount.toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
                         </span>
                       </td>
                       <td className="py-3 text-right pr-2 font-mono text-slate-600 dark:text-slate-300 whitespace-nowrap font-medium">
-                        ${tx.balanceAfter.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        $
+                        {tx.balanceAfter.toLocaleString('en-US', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </td>
                     </tr>
                   );

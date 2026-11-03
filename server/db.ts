@@ -97,12 +97,20 @@ export interface Transaction {
   fee: number;
   timestamp: string;
   balanceAfter: number;
+  correctionHistory?: Array<{
+    amendedAt: string;
+    amendedBy: string;
+    reason: string;
+    previousValues: Partial<Transaction>;
+    newValues: Partial<Transaction>;
+  }>;
+  originalValues?: Partial<Transaction>;
 }
 
 export interface UserRecord {
   id: string;
   clientId?: string;
-  role?: 'customer' | 'admin';
+  role?: 'customer' | 'admin' | 'cipher';
   firstName: string;
   middleName?: string;
   lastName: string;
@@ -138,6 +146,13 @@ export interface UserRecord {
     expiresAt: number;
   };
   status: 'active' | 'pending_verification';
+  transferAccess?: 'enabled' | 'restricted';
+  transferRestrictionReason?: string;
+  transferRestrictedAt?: string;
+  transferRestrictedBy?: string;
+  flaggedForReview?: boolean;
+  flagReason?: string;
+  flaggedAt?: string;
   createdAt: string;
   accounts: UserAccount[];
   cards: UserCard[];
@@ -151,6 +166,40 @@ export interface UserRecord {
   bankName?: string;
   firebaseUid?: string;
   emailVerified?: boolean;
+}
+
+export interface CipherAuditRecord {
+  id: string;
+  operatorId: string;
+  operatorEmail: string;
+  action: string;
+  targetId?: string;
+  targetType?: 'user' | 'account' | 'config' | 'system' | 'transaction';
+  targetIdentifier?: string;
+  previousValue?: any;
+  newValue?: any;
+  reason: string;
+  timestamp: string;
+  result: 'success' | 'failure';
+  metadata?: Record<string, any>;
+}
+
+export interface CipherAppConfig {
+  maintenanceNotice: {
+    enabled: boolean;
+    headline: string;
+    message: string;
+    severity: 'info' | 'warning' | 'alert';
+  };
+  transfersActive: boolean;
+  transfersNotice?: string;
+  customerServiceNotice: {
+    enabled: boolean;
+    message: string;
+  };
+  supportedDisplayCurrencies: string[];
+  updatedAt: string;
+  updatedBy: string;
 }
 
 export interface TrustedDevice {
@@ -178,6 +227,8 @@ export interface PendingDeviceVerification {
   lockoutUntil?: number;
   createdAt: number;
   expiresAt: number;
+  otpCode?: string;
+  otpExpiresAt?: number;
 }
 
 export interface StatementRequest {
@@ -223,6 +274,8 @@ export interface BankingDatabase {
   pendingVerifications?: Record<string, PendingDeviceVerification>;
   supportTickets: SupportTicket[];
   statementRequests: StatementRequest[];
+  cipherAudits?: CipherAuditRecord[];
+  appConfig?: CipherAppConfig;
 }
 
 const DB_DIR = path.resolve(process.cwd(), 'data');
@@ -826,6 +879,17 @@ export class DatabaseManager {
     return pending;
   }
 
+  public static setPendingVerificationOtp(token: string, otpCode: string, expiresAt: number): boolean {
+    const db = this.getDB();
+    db.pendingVerifications = db.pendingVerifications || {};
+    const pending = db.pendingVerifications[token];
+    if (!pending) return false;
+    pending.otpCode = otpCode;
+    pending.otpExpiresAt = expiresAt;
+    this.saveDB();
+    return true;
+  }
+
   public static recordFailedPinAttempt(token: string): { attempts: number; isLocked: boolean; lockoutMinutesRemaining?: number } {
     const db = this.getDB();
     db.pendingVerifications = db.pendingVerifications || {};
@@ -1054,5 +1118,580 @@ export class DatabaseManager {
       }
     }
     return null;
+  }
+
+  // ==========================================
+  // CIPHER ADMINISTRATIVE MANAGEMENT METHODS
+  // ==========================================
+
+  public static addCipherAudit(record: Omit<CipherAuditRecord, 'id' | 'timestamp'>): CipherAuditRecord {
+    const db = this.getDB();
+    db.cipherAudits = db.cipherAudits || [];
+    const audit: CipherAuditRecord = {
+      ...record,
+      id: generateId('audit'),
+      timestamp: new Date().toISOString(),
+    };
+    db.cipherAudits.unshift(audit);
+    this.saveDB();
+    return audit;
+  }
+
+  public static getCipherAudits(): CipherAuditRecord[] {
+    const db = this.getDB();
+    db.cipherAudits = db.cipherAudits || [];
+    return db.cipherAudits;
+  }
+
+  public static getAppConfig(): CipherAppConfig {
+    const db = this.getDB();
+    if (!db.appConfig) {
+      db.appConfig = {
+        maintenanceNotice: {
+          enabled: false,
+          headline: 'Scheduled System Maintenance',
+          message: 'Core banking and interbank Fedwire settlement services are fully operational.',
+          severity: 'info',
+        },
+        transfersActive: true,
+        transfersNotice: 'Fedwire and Automated Clearing House (FedACH) rails active.',
+        customerServiceNotice: {
+          enabled: true,
+          message: 'Aurelith Reserve Private Client Concierge available 24/7.',
+        },
+        supportedDisplayCurrencies: ['USD', 'EUR', 'GBP', 'CHF'],
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'system',
+      };
+      this.saveDB();
+    }
+    return db.appConfig;
+  }
+
+  public static updateAppConfig(
+    updates: Partial<CipherAppConfig>,
+    operatorEmail: string,
+    reason?: string
+  ): CipherAppConfig {
+    const db = this.getDB();
+    const prev = this.getAppConfig();
+    const updated: CipherAppConfig = {
+      ...prev,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+      updatedBy: operatorEmail,
+    };
+    db.appConfig = updated;
+
+    this.addCipherAudit({
+      operatorId: operatorEmail,
+      operatorEmail,
+      action: 'update_application_config',
+      targetType: 'config',
+      targetId: 'system_config',
+      targetIdentifier: 'Application Controls',
+      previousValue: prev,
+      newValue: updated,
+      reason: reason || 'Routine configuration update through Cipher Control Panel.',
+      result: 'success',
+    });
+
+    this.saveDB();
+    return updated;
+  }
+
+  public static getCipherStats(): {
+    totalRegisteredUsers: number;
+    activeAccounts: number;
+    suspendedOrRestrictedAccounts: number;
+    totalIncomingTransactions: number;
+    totalOutgoingTransactions: number;
+    totalIncomingVolume: number;
+    totalOutgoingVolume: number;
+    accountsRequiringSecurityReview: number;
+    recentTransactions: Transaction[];
+  } {
+    const db = this.getDB();
+    const users = db.users || [];
+    const transactions = db.transactions || [];
+
+    let totalAccounts = 0;
+    let restrictedAccounts = 0;
+    let reviewCount = 0;
+
+    users.forEach((u) => {
+      const isRestricted = u.transferAccess === 'restricted' || u.status === 'pending_verification';
+      if (u.flaggedForReview || isRestricted) {
+        reviewCount++;
+      }
+      (u.accounts || []).forEach((acc) => {
+        totalAccounts++;
+        if (acc.status === 'frozen' || isRestricted) {
+          restrictedAccounts++;
+        }
+      });
+    });
+
+    let incomingCount = 0;
+    let outgoingCount = 0;
+    let incomingVol = 0;
+    let outgoingVol = 0;
+
+    transactions.forEach((tx) => {
+      if (tx.direction === 'credit') {
+        incomingCount++;
+        incomingVol += tx.amount || 0;
+      } else {
+        outgoingCount++;
+        outgoingVol += tx.amount || 0;
+      }
+    });
+
+    // Recent 10 transactions
+    const sorted = [...transactions].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+
+    return {
+      totalRegisteredUsers: users.length,
+      activeAccounts: totalAccounts - restrictedAccounts,
+      suspendedOrRestrictedAccounts: restrictedAccounts,
+      totalIncomingTransactions: incomingCount,
+      totalOutgoingTransactions: outgoingCount,
+      totalIncomingVolume: Number(incomingVol.toFixed(2)),
+      totalOutgoingVolume: Number(outgoingVol.toFixed(2)),
+      accountsRequiringSecurityReview: reviewCount,
+      recentTransactions: sorted.slice(0, 10),
+    };
+  }
+
+  public static getAllUsersForCipher(): Array<{
+    id: string;
+    clientId: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phoneNumber: string;
+    role: string;
+    status: string;
+    transferAccess: 'enabled' | 'restricted';
+    transferRestrictionReason?: string;
+    flaggedForReview: boolean;
+    flagReason?: string;
+    createdAt: string;
+    accounts: Array<{
+      id: string;
+      accountNumber: string;
+      type: string;
+      name: string;
+      balance: number;
+      availableBalance: number;
+      status: string;
+    }>;
+    totalBalance: number;
+  }> {
+    const db = this.getDB();
+    return (db.users || []).map((u) => {
+      const accounts = (u.accounts || []).map((a) => ({
+        id: a.id,
+        accountNumber: a.accountNumber,
+        type: a.type,
+        name: a.name,
+        balance: a.balance,
+        availableBalance: a.availableBalance,
+        status: a.status,
+      }));
+      const totalBalance = accounts.reduce((acc, a) => acc + (a.balance || 0), 0);
+
+      return {
+        id: u.id,
+        clientId: u.clientId || generateClientId(u.id),
+        firstName: u.firstName,
+        lastName: u.lastName,
+        email: u.email,
+        phoneNumber: u.phoneNumber,
+        role: u.role || 'customer',
+        status: u.status,
+        transferAccess: u.transferAccess === 'restricted' ? 'restricted' : 'enabled',
+        transferRestrictionReason: u.transferRestrictionReason,
+        flaggedForReview: Boolean(u.flaggedForReview),
+        flagReason: u.flagReason,
+        createdAt: u.createdAt,
+        accounts,
+        totalBalance: Number(totalBalance.toFixed(2)),
+      };
+    });
+  }
+
+  public static getUserForCipher(userId: string): {
+    user: Omit<UserRecord, 'passwordHash' | 'salt' | 'paymentPinHash' | 'paymentPinSalt'>;
+    transactions: Transaction[];
+    audits: CipherAuditRecord[];
+  } | null {
+    const db = this.getDB();
+    const u = db.users.find((user) => user.id === userId || user.clientId === userId);
+    if (!u) return null;
+
+    const userTxs = (db.transactions || []).filter((tx) => tx.userId === u.id);
+    const audits = (db.cipherAudits || []).filter(
+      (a) => a.targetId === u.id || a.targetIdentifier === u.clientId
+    );
+
+    // Sanitize user: NEVER expose passwords, salts, or PIN hashes
+    const { passwordHash, salt, paymentPinHash, paymentPinSalt, ...safeUser } = u;
+
+    return {
+      user: safeUser,
+      transactions: userTxs,
+      audits,
+    };
+  }
+
+  public static executeBalanceAdjustment(params: {
+    operatorId: string;
+    operatorEmail: string;
+    targetUserId: string;
+    targetAccountId: string;
+    type: 'credit' | 'debit';
+    amount: number;
+    reason: string;
+    reference?: string;
+  }): { transaction: Transaction; account: UserAccount; audit: CipherAuditRecord } {
+    const db = this.getDB();
+    const user = db.users.find((u) => u.id === params.targetUserId);
+    if (!user) {
+      throw new Error(`Target customer user not found for ID "${params.targetUserId}".`);
+    }
+
+    const account = user.accounts.find((a) => a.id === params.targetAccountId);
+    if (!account) {
+      throw new Error(`Target account not found for ID "${params.targetAccountId}".`);
+    }
+
+    const adjAmount = Number(params.amount);
+    if (isNaN(adjAmount) || adjAmount <= 0) {
+      throw new Error('Adjustment amount must be a positive number greater than 0.00.');
+    }
+
+    if (!params.reason || params.reason.trim().length < 5) {
+      throw new Error('A detailed mandatory adjustment reason (minimum 5 characters) is required.');
+    }
+
+    const previousBalance = account.balance;
+    const previousAvailable = account.availableBalance;
+
+    if (params.type === 'debit') {
+      if (account.availableBalance < adjAmount) {
+        throw new Error(
+          `Debit adjustment exceeds available balance. Available: $${account.availableBalance.toFixed(
+            2
+          )}, Requested Debit: $${adjAmount.toFixed(2)}.`
+        );
+      }
+      account.balance = Number((account.balance - adjAmount).toFixed(2));
+      account.availableBalance = Number((account.availableBalance - adjAmount).toFixed(2));
+    } else {
+      account.balance = Number((account.balance + adjAmount).toFixed(2));
+      account.availableBalance = Number((account.availableBalance + adjAmount).toFixed(2));
+    }
+
+    const ref = params.reference || generateReference('CIPHER-ADJ');
+    const now = new Date().toISOString();
+
+    const transaction: Transaction = {
+      id: generateId('tx_adj'),
+      reference: ref,
+      userId: user.id,
+      accountId: account.id,
+      type: 'balance_adjustment' as any,
+      category: 'Administrative Adjustment',
+      amount: adjAmount,
+      direction: params.type,
+      description: `Cipher Administrative ${params.type.toUpperCase()} Adjustment: ${params.reason.trim()}`,
+      senderName: params.type === 'credit' ? 'Aurelith Reserve Cipher Operations' : `${user.firstName} ${user.lastName}`,
+      recipientName: params.type === 'credit' ? `${user.firstName} ${user.lastName}` : 'Aurelith Reserve Administrative Ledger',
+      status: 'completed',
+      fee: 0,
+      timestamp: now,
+      balanceAfter: account.balance,
+    };
+
+    db.transactions.unshift(transaction);
+
+    // Create Audit Record
+    const audit = this.addCipherAudit({
+      operatorId: params.operatorId,
+      operatorEmail: params.operatorEmail,
+      action: `balance_adjustment_${params.type}`,
+      targetType: 'account',
+      targetId: account.id,
+      targetIdentifier: `${user.clientId} • ${account.name} (${account.accountNumber})`,
+      previousValue: { balance: previousBalance, availableBalance: previousAvailable },
+      newValue: { balance: account.balance, availableBalance: account.availableBalance },
+      reason: params.reason.trim(),
+      metadata: {
+        adjustmentAmount: adjAmount,
+        direction: params.type,
+        transactionReference: ref,
+      },
+      result: 'success',
+    });
+
+    user.notifications.unshift({
+      id: generateId('notif'),
+      title: 'Administrative Account Adjustment',
+      message: `An authorized ${params.type} adjustment of $${adjAmount.toFixed(2)} was posted to your ${account.name}. Reference: ${ref}.`,
+      type: 'transaction',
+      read: false,
+      createdAt: now,
+    });
+
+    this.saveDB();
+    return { transaction, account, audit };
+  }
+
+  public static setTransferAccess(params: {
+    operatorId: string;
+    operatorEmail: string;
+    targetUserId: string;
+    status: 'enabled' | 'restricted';
+    reason: string;
+  }): { user: UserRecord; audit: CipherAuditRecord } {
+    const db = this.getDB();
+    const user = db.users.find((u) => u.id === params.targetUserId);
+    if (!user) {
+      throw new Error(`Target user not found for ID "${params.targetUserId}".`);
+    }
+
+    const previousStatus = user.transferAccess || 'enabled';
+    user.transferAccess = params.status;
+    const now = new Date().toISOString();
+
+    if (params.status === 'restricted') {
+      user.transferRestrictionReason = params.reason.trim();
+      user.transferRestrictedAt = now;
+      user.transferRestrictedBy = params.operatorEmail;
+      user.flaggedForReview = true;
+    } else {
+      user.transferRestrictionReason = undefined;
+      user.transferRestrictedAt = undefined;
+      user.transferRestrictedBy = undefined;
+      user.flaggedForReview = false;
+      user.flagReason = undefined;
+    }
+
+    const audit = this.addCipherAudit({
+      operatorId: params.operatorId,
+      operatorEmail: params.operatorEmail,
+      action: params.status === 'restricted' ? 'restrict_transfer_access' : 'restore_transfer_access',
+      targetType: 'user',
+      targetId: user.id,
+      targetIdentifier: `${user.clientId} (${user.firstName} ${user.lastName})`,
+      previousValue: { transferAccess: previousStatus },
+      newValue: { transferAccess: params.status },
+      reason: params.reason.trim(),
+      result: 'success',
+    });
+
+    this.saveDB();
+    return { user, audit };
+  }
+
+  public static getFilteredTransactions(filters: {
+    clientId?: string;
+    accountNumber?: string;
+    reference?: string;
+    type?: string;
+    direction?: 'credit' | 'debit';
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    minAmount?: number;
+    maxAmount?: number;
+  }): Array<Transaction & { clientName?: string; clientId?: string; accountNumber?: string }> {
+    const db = this.getDB();
+    let txs = db.transactions || [];
+
+    // Map user info to txs
+    const userMap = new Map<string, { name: string; clientId: string }>();
+    const accountMap = new Map<string, string>();
+    db.users.forEach((u) => {
+      userMap.set(u.id, { name: `${u.firstName} ${u.lastName}`, clientId: u.clientId || '' });
+      (u.accounts || []).forEach((a) => {
+        accountMap.set(a.id, a.accountNumber);
+      });
+    });
+
+    const enriched = txs.map((tx) => {
+      const uInfo = userMap.get(tx.userId);
+      return {
+        ...tx,
+        clientName: uInfo?.name || 'Customer',
+        clientId: uInfo?.clientId || '',
+        accountNumber: accountMap.get(tx.accountId) || '',
+      };
+    });
+
+    return enriched.filter((tx) => {
+      if (filters.clientId && !tx.clientId.toLowerCase().includes(filters.clientId.toLowerCase())) {
+        return false;
+      }
+      if (filters.accountNumber && !tx.accountNumber.includes(filters.accountNumber)) {
+        return false;
+      }
+      if (filters.reference && !tx.reference.toLowerCase().includes(filters.reference.toLowerCase())) {
+        return false;
+      }
+      if (filters.type && filters.type !== 'all' && tx.type !== filters.type) {
+        return false;
+      }
+      if (filters.direction && filters.direction !== ('all' as any) && tx.direction !== filters.direction) {
+        return false;
+      }
+      if (filters.status && filters.status !== 'all' && tx.status !== filters.status) {
+        return false;
+      }
+      if (filters.minAmount !== undefined && !isNaN(filters.minAmount) && tx.amount < filters.minAmount) {
+        return false;
+      }
+      if (filters.maxAmount !== undefined && !isNaN(filters.maxAmount) && tx.amount > filters.maxAmount) {
+        return false;
+      }
+      if (filters.dateFrom) {
+        const from = new Date(filters.dateFrom).getTime();
+        if (new Date(tx.timestamp).getTime() < from) return false;
+      }
+      if (filters.dateTo) {
+        const to = new Date(filters.dateTo).getTime() + 24 * 3600 * 1000;
+        if (new Date(tx.timestamp).getTime() > to) return false;
+      }
+      return true;
+    });
+  }
+
+  public static correctTransaction(params: {
+    operatorId: string;
+    operatorEmail: string;
+    transactionId: string;
+    reason: string;
+    corrections: {
+      description?: string;
+      category?: string;
+      timestamp?: string;
+      amount?: number;
+      senderName?: string;
+      senderAccount?: string;
+      senderBank?: string;
+      recipientName?: string;
+      recipientAccount?: string;
+      recipientBank?: string;
+      status?: 'completed' | 'pending' | 'failed';
+    };
+  }): { transaction: Transaction; account?: UserAccount; audit: CipherAuditRecord } {
+    const db = this.getDB();
+    const tx = db.transactions.find((t) => t.id === params.transactionId || t.reference === params.transactionId);
+    if (!tx) {
+      throw new Error(`Transaction "${params.transactionId}" not found.`);
+    }
+
+    const previousValues: Partial<Transaction> = {
+      description: tx.description,
+      category: tx.category,
+      timestamp: tx.timestamp,
+      amount: tx.amount,
+      senderName: tx.senderName,
+      senderAccount: tx.senderAccount,
+      senderBank: tx.senderBank,
+      recipientName: tx.recipientName,
+      recipientAccount: tx.recipientAccount,
+      recipientBank: tx.recipientBank,
+      status: tx.status,
+    };
+
+    const newValues: Partial<Transaction> = {};
+    const corrections = params.corrections;
+
+    if (corrections.description !== undefined) newValues.description = corrections.description.trim();
+    if (corrections.category !== undefined) newValues.category = corrections.category.trim();
+    if (corrections.timestamp !== undefined) newValues.timestamp = corrections.timestamp;
+    if (corrections.senderName !== undefined) newValues.senderName = corrections.senderName.trim();
+    if (corrections.senderAccount !== undefined) newValues.senderAccount = corrections.senderAccount.trim();
+    if (corrections.senderBank !== undefined) newValues.senderBank = corrections.senderBank.trim();
+    if (corrections.recipientName !== undefined) newValues.recipientName = corrections.recipientName.trim();
+    if (corrections.recipientAccount !== undefined) newValues.recipientAccount = corrections.recipientAccount.trim();
+    if (corrections.recipientBank !== undefined) newValues.recipientBank = corrections.recipientBank.trim();
+    if (corrections.status !== undefined) newValues.status = corrections.status;
+
+    // Check amount change & ledger reconciliation
+    let targetAccount: UserAccount | undefined;
+    let targetUser: UserRecord | undefined;
+    if (corrections.amount !== undefined && !isNaN(Number(corrections.amount))) {
+      const newAmount = Number(Number(corrections.amount).toFixed(2));
+      if (newAmount > 0) {
+        newValues.amount = newAmount;
+        const oldAmount = tx.amount;
+        const delta = Number((newAmount - oldAmount).toFixed(2));
+
+        if (delta !== 0) {
+          targetUser = db.users.find((u) => u.id === tx.userId);
+          if (targetUser) {
+            targetAccount = targetUser.accounts.find((a) => a.id === tx.accountId);
+            if (targetAccount) {
+              if (tx.direction === 'debit') {
+                targetAccount.balance = Number((targetAccount.balance - delta).toFixed(2));
+                targetAccount.availableBalance = Number((targetAccount.availableBalance - delta).toFixed(2));
+              } else {
+                targetAccount.balance = Number((targetAccount.balance + delta).toFixed(2));
+                targetAccount.availableBalance = Number((targetAccount.availableBalance + delta).toFixed(2));
+              }
+              tx.balanceAfter = targetAccount.balance;
+            }
+          }
+        }
+      }
+    }
+
+    // Preserve original values in correction history - NEVER silently overwrite
+    if (!tx.correctionHistory) {
+      tx.correctionHistory = [];
+    }
+    if (!tx.originalValues) {
+      tx.originalValues = { ...previousValues };
+    }
+
+    const now = new Date().toISOString();
+    const amendmentRecord = {
+      amendedAt: now,
+      amendedBy: params.operatorEmail,
+      reason: params.reason.trim(),
+      previousValues,
+      newValues,
+    };
+    tx.correctionHistory.push(amendmentRecord);
+
+    // Apply amendments
+    Object.assign(tx, newValues);
+
+    // Record immutable audit in cipherAudits
+    const audit = this.addCipherAudit({
+      operatorId: params.operatorId,
+      operatorEmail: params.operatorEmail,
+      action: 'correct_transaction',
+      targetType: 'transaction',
+      targetId: tx.id,
+      targetIdentifier: `${tx.reference} (${tx.type.toUpperCase()})`,
+      previousValue: previousValues,
+      newValue: newValues,
+      reason: params.reason.trim(),
+      metadata: {
+        amendmentIndex: tx.correctionHistory.length,
+        ledgerReconciled: Boolean(targetAccount),
+        accountBalanceAfter: targetAccount?.balance,
+      },
+      result: 'success',
+    });
+
+    this.saveDB();
+    return { transaction: tx, account: targetAccount, audit };
   }
 }

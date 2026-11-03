@@ -562,6 +562,9 @@ export class InterbankVerificationService {
   /**
    * Verify an account number against a specific bank (or resolve automatically if bankIdentifier is omitted)
    */
+  /**
+   * Verify an account number against a specific bank (or resolve automatically if bankIdentifier is omitted)
+   */
   public static verifyRecipient(
     bankIdentifier: string | undefined,
     accountNumber: string,
@@ -573,13 +576,62 @@ export class InterbankVerificationService {
     requiresBankSelection?: boolean;
     ambiguousBanks?: string[];
     source?: string;
+    isPreviouslyUsed?: boolean;
+    lastTransferDate?: string;
   } {
-    const cleanAccount = accountNumber.trim().replace(/\s+/g, '');
-    if (!cleanAccount || cleanAccount.length < 6) {
+    // Robust normalization for pasted values: remove spaces, tabs, line breaks, non-alphanumeric except hyphen
+    const cleanAccount = accountNumber.trim().replace(/[\s\r\n\t]+/g, '');
+    const digitsOnly = cleanAccount.replace(/\D/g, '');
+    if (!cleanAccount || (digitsOnly.length < 6 && cleanAccount.length < 6)) {
       return {
         verified: false,
         error: 'Please enter a valid account number (minimum 6 digits).',
       };
+    }
+
+    // 0. CHECK IF PREVIOUSLY USED RECIPIENT BY CURRENT USER (Section 5)
+    if (senderUserId) {
+      const db = DatabaseManager.getDB();
+      const currentUser = db.users.find((u) => u.id === senderUserId);
+      const priorTx = db.transactions
+        .filter(
+          (t) =>
+            t.userId === senderUserId &&
+            (t.recipientAccount === cleanAccount || (digitsOnly && t.recipientAccount?.replace(/\D/g, '') === digitsOnly)) &&
+            t.type === 'transfer' &&
+            t.direction === 'debit' &&
+            t.status === 'completed'
+        )
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+
+      const priorBen = currentUser?.beneficiaries?.find(
+        (b) => b.accountNumber === cleanAccount || (digitsOnly && b.accountNumber.replace(/\D/g, '') === digitsOnly)
+      );
+
+      if (priorTx || priorBen) {
+        const recordedBankName = priorTx?.recipientBank || priorBen?.bankName || '';
+        const recordedBank = this.findBank(recordedBankName);
+        if (recordedBank) {
+          const recName = priorTx?.recipientName || priorBen?.name || 'Verified Recipient';
+          const rRouting = priorBen?.routingNumber || (priorTx as any)?.routingNumber || recordedBank.routingNumber;
+          const rSwift = (priorTx as any)?.swiftCode || recordedBank.swiftCode;
+          return {
+            verified: true,
+            isPreviouslyUsed: true,
+            lastTransferDate: priorTx?.timestamp,
+            source: 'Previously Used Recipient (Customer Transfer Record)',
+            recipient: {
+              accountNumber: cleanAccount,
+              recipientName: recName,
+              bankName: recordedBank.name,
+              routingNumber: rRouting,
+              swiftCode: rSwift,
+              accountType: 'Personal / Commercial Account',
+              status: 'eligible',
+            },
+          };
+        }
+      }
     }
 
     if (!bankIdentifier || !bankIdentifier.trim()) {
@@ -597,6 +649,9 @@ export class InterbankVerificationService {
     // 1. Check if recipient is at Aurelith Reserve (internal account discovery)
     if (bank.id === 'aurelith' || bank.name.includes('Aurelith')) {
       let internalMatch = DatabaseManager.findUserByAccountNumber(cleanAccount);
+      if (!internalMatch && digitsOnly) {
+        internalMatch = DatabaseManager.findUserByAccountNumber(digitsOnly);
+      }
       if (!internalMatch) {
         internalMatch = DatabaseManager.findUserByClientId(cleanAccount);
       }
@@ -619,6 +674,7 @@ export class InterbankVerificationService {
 
         return {
           verified: true,
+          isPreviouslyUsed: false,
           source: 'Aurelith Reserve Authorized Internal Ledger Directory',
           recipient: {
             accountNumber: internalMatch.account.accountNumber,
@@ -635,14 +691,20 @@ export class InterbankVerificationService {
       // Check external/test table in case of mock Aurelith recipient
       const extMatch = VERIFIED_INTERBANK_ACCOUNTS.find(
         (a) =>
-          a.accountNumber === cleanAccount &&
+          (a.accountNumber === cleanAccount || (digitsOnly && a.accountNumber === digitsOnly)) &&
           (a.bankName.includes('Aurelith') || bank.id === 'aurelith')
       );
       if (extMatch) {
         return {
           verified: true,
+          isPreviouslyUsed: false,
           source: 'Aurelith Reserve Verified Account Directory',
-          recipient: extMatch,
+          recipient: {
+            ...extMatch,
+            // For new external/interbank recipients, routing and SWIFT must initially be BLANK
+            routingNumber: '',
+            swiftCode: '',
+          },
         };
       }
 
@@ -655,7 +717,7 @@ export class InterbankVerificationService {
     // 2. Check Authorized Interbank Clearing Directory for external institutions
     const match = VERIFIED_INTERBANK_ACCOUNTS.find(
       (a) =>
-        a.accountNumber === cleanAccount &&
+        (a.accountNumber === cleanAccount || (digitsOnly && a.accountNumber === digitsOnly)) &&
         (a.bankName.toLowerCase() === bank.name.toLowerCase() ||
           a.bankName.toLowerCase().includes(bank.shortName.toLowerCase()) ||
           bank.name.toLowerCase().includes(a.bankName.toLowerCase()))
@@ -669,14 +731,42 @@ export class InterbankVerificationService {
         };
       }
 
+      // NEW RECIPIENT: SWIFT code and routing number MUST NOT be autofilled (Section 3)
       return {
         verified: true,
+        isPreviouslyUsed: false,
         source: 'Authorized Interbank Clearing Directory (FedACH / Fedwire Verified)',
         recipient: {
-          ...match,
+          accountNumber: cleanAccount,
+          recipientName: match.recipientName,
           bankName: bank.name,
-          routingNumber: bank.routingNumber,
-          swiftCode: bank.swiftCode,
+          routingNumber: '', // BLANK for new recipient
+          swiftCode: '', // BLANK for new recipient
+          accountType: match.accountType,
+          status: 'eligible',
+        },
+      };
+    }
+
+    // If bankIdentifier was specified but no account matched at that bank,
+    // also try auto-resolving across ALL banks to prevent false rejects if user switched account
+    const globalMatch = VERIFIED_INTERBANK_ACCOUNTS.find(
+      (a) => a.accountNumber === cleanAccount || (digitsOnly && a.accountNumber === digitsOnly)
+    );
+    if (globalMatch) {
+      const actualBank = this.findBank(globalMatch.bankName);
+      return {
+        verified: true,
+        isPreviouslyUsed: false,
+        source: 'Authorized Interbank Clearing Directory (FedACH / Fedwire Verified)',
+        recipient: {
+          accountNumber: cleanAccount,
+          recipientName: globalMatch.recipientName,
+          bankName: actualBank ? actualBank.name : globalMatch.bankName,
+          routingNumber: '', // BLANK for new recipient
+          swiftCode: '', // BLANK for new recipient
+          accountType: globalMatch.accountType,
+          status: 'eligible',
         },
       };
     }
@@ -703,13 +793,61 @@ export class InterbankVerificationService {
     requiresBankSelection?: boolean;
     ambiguousBanks?: string[];
     source?: string;
+    isPreviouslyUsed?: boolean;
+    lastTransferDate?: string;
   } {
-    const cleanAccount = accountNumber.trim().replace(/\s+/g, '');
-    if (!cleanAccount || cleanAccount.length < 6) {
+    const cleanAccount = accountNumber.trim().replace(/[\s\r\n\t]+/g, '');
+    const digitsOnly = cleanAccount.replace(/\D/g, '');
+    if (!cleanAccount || (digitsOnly.length < 6 && cleanAccount.length < 6)) {
       return {
         verified: false,
         error: 'Please enter a valid recipient account number (minimum 6 digits).',
       };
+    }
+
+    // 0. CHECK IF PREVIOUSLY USED RECIPIENT BY CURRENT USER (Section 5)
+    if (senderUserId) {
+      const db = DatabaseManager.getDB();
+      const currentUser = db.users.find((u) => u.id === senderUserId);
+      const priorTx = db.transactions
+        .filter(
+          (t) =>
+            t.userId === senderUserId &&
+            (t.recipientAccount === cleanAccount || (digitsOnly && t.recipientAccount?.replace(/\D/g, '') === digitsOnly)) &&
+            t.type === 'transfer' &&
+            t.direction === 'debit' &&
+            t.status === 'completed'
+        )
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+
+      const priorBen = currentUser?.beneficiaries?.find(
+        (b) => b.accountNumber === cleanAccount || (digitsOnly && b.accountNumber.replace(/\D/g, '') === digitsOnly)
+      );
+
+      if (priorTx || priorBen) {
+        const recordedBankName = priorTx?.recipientBank || priorBen?.bankName || '';
+        const recordedBank = this.findBank(recordedBankName);
+        if (recordedBank) {
+          const recName = priorTx?.recipientName || priorBen?.name || 'Verified Recipient';
+          const rRouting = priorBen?.routingNumber || (priorTx as any)?.routingNumber || recordedBank.routingNumber;
+          const rSwift = (priorTx as any)?.swiftCode || recordedBank.swiftCode;
+          return {
+            verified: true,
+            isPreviouslyUsed: true,
+            lastTransferDate: priorTx?.timestamp,
+            source: 'Previously Used Recipient (Customer Transfer Record)',
+            recipient: {
+              accountNumber: cleanAccount,
+              recipientName: recName,
+              bankName: recordedBank.name,
+              routingNumber: rRouting,
+              swiftCode: rSwift,
+              accountType: 'Personal / Commercial Account',
+              status: 'eligible',
+            },
+          };
+        }
+      }
     }
 
     if (preferredBankIdentifier) {
@@ -718,6 +856,9 @@ export class InterbankVerificationService {
 
     // 1. Search Aurelith Reserve internal ledger
     let internalMatch = DatabaseManager.findUserByAccountNumber(cleanAccount);
+    if (!internalMatch && digitsOnly) {
+      internalMatch = DatabaseManager.findUserByAccountNumber(digitsOnly);
+    }
     if (!internalMatch) {
       internalMatch = DatabaseManager.findUserByClientId(cleanAccount);
     }
@@ -745,6 +886,7 @@ export class InterbankVerificationService {
 
       return {
         verified: true,
+        isPreviouslyUsed: false,
         source: 'Aurelith Reserve Authorized Internal Ledger Directory',
         recipient: {
           accountNumber: internalMatch.account.accountNumber,
@@ -760,7 +902,7 @@ export class InterbankVerificationService {
 
     // 2. Search Authorized Interbank Clearing Directory
     const matches = VERIFIED_INTERBANK_ACCOUNTS.filter(
-      (a) => a.accountNumber === cleanAccount
+      (a) => a.accountNumber === cleanAccount || (digitsOnly && a.accountNumber === digitsOnly)
     );
 
     if (matches.length === 1) {
@@ -774,14 +916,19 @@ export class InterbankVerificationService {
         };
       }
 
+      // For NEW recipient: SWIFT & routing MUST initially be BLANK
       return {
         verified: true,
+        isPreviouslyUsed: false,
         source: 'Authorized Interbank Clearing Directory (FedACH / Fedwire Verified)',
         recipient: {
-          ...match,
+          accountNumber: cleanAccount,
+          recipientName: match.recipientName,
           bankName: bank ? bank.name : match.bankName,
-          routingNumber: bank ? bank.routingNumber : match.routingNumber,
-          swiftCode: bank ? bank.swiftCode : match.swiftCode,
+          routingNumber: '', // BLANK for new recipient
+          swiftCode: '', // BLANK for new recipient
+          accountType: match.accountType,
+          status: 'eligible',
         },
       };
     }
@@ -803,6 +950,77 @@ export class InterbankVerificationService {
   }
 
   /**
+   * Validate routing number and SWIFT code live against authoritative bank records
+   */
+  public static validateRoutingAndSwift(params: {
+    bankName: string;
+    routingNumber?: string;
+    swiftCode?: string;
+  }): {
+    valid: boolean;
+    routingValid: boolean;
+    swiftValid: boolean;
+    routingError?: string;
+    swiftError?: string;
+    authoritativeRouting?: string;
+    authoritativeSwift?: string;
+  } {
+    const bank = this.findBank(params.bankName);
+    if (!bank) {
+      return {
+        valid: false,
+        routingValid: false,
+        swiftValid: false,
+        routingError: 'Selected bank institution is not recognized.',
+      };
+    }
+
+    let routingValid = false;
+    let routingError: string | undefined = undefined;
+
+    if (params.routingNumber) {
+      const cleanRouting = params.routingNumber.trim().replace(/\s+/g, '');
+      const expected = bank.routingNumber.replace(/\s+/g, '');
+      if (cleanRouting === expected) {
+        routingValid = true;
+      } else {
+        if (cleanRouting.length >= 9 || cleanRouting.length >= expected.length) {
+          routingError = `Routing number does not match ${bank.name} records. Expected routing number for this institution.`;
+        }
+      }
+    }
+
+    let swiftValid = false;
+    let swiftError: string | undefined = undefined;
+
+    if (params.swiftCode) {
+      const cleanSwift = params.swiftCode.trim().toUpperCase();
+      const expectedSwift = bank.swiftCode.toUpperCase();
+      const matches =
+        cleanSwift === expectedSwift ||
+        cleanSwift === `${expectedSwift}XXX` ||
+        (expectedSwift.length === 11 && cleanSwift === expectedSwift.slice(0, 8));
+      if (matches) {
+        swiftValid = true;
+      } else {
+        if (cleanSwift.length >= 8) {
+          swiftError = `SWIFT code does not match ${bank.name} records.`;
+        }
+      }
+    }
+
+    return {
+      valid: routingValid && swiftValid,
+      routingValid,
+      swiftValid,
+      routingError,
+      swiftError,
+      authoritativeRouting: bank.routingNumber,
+      authoritativeSwift: bank.swiftCode,
+    };
+  }
+
+  /**
    * Validate that all banking identifiers for a proposed transfer strictly match authoritative institution records
    */
   public static validateTransferIdentifiers(params: {
@@ -811,12 +1029,13 @@ export class InterbankVerificationService {
     recipientName: string;
     routingNumber?: string;
     swiftCode?: string;
+    userId?: string;
   }): { valid: boolean; error?: string; validatedRecipient?: VerifiedRecipientAccount } {
-    const { bankName, accountNumber, recipientName, routingNumber, swiftCode } = params;
+    const { bankName, accountNumber, recipientName, routingNumber, swiftCode, userId } = params;
 
     const verification = bankName
-      ? this.verifyRecipient(bankName, accountNumber)
-      : this.resolveRecipient(accountNumber);
+      ? this.verifyRecipient(bankName, accountNumber, userId)
+      : this.resolveRecipient(accountNumber, userId);
 
     if (!verification.verified || !verification.recipient) {
       return {
@@ -828,6 +1047,13 @@ export class InterbankVerificationService {
     }
 
     const rec = verification.recipient;
+    const targetBank = this.findBank(rec.bankName) || (bankName ? this.findBank(bankName) : null);
+    if (!targetBank) {
+      return {
+        valid: false,
+        error: `Could not identify authoritative bank profile for "${rec.bankName}".`,
+      };
+    }
 
     // Validate bank if supplied
     if (bankName) {
@@ -844,38 +1070,63 @@ export class InterbankVerificationService {
     // Validate recipient name matches verified record (case-insensitive substring/match)
     const normalizedExpected = rec.recipientName.trim().toLowerCase();
     const normalizedInput = recipientName.trim().toLowerCase();
-    if (normalizedExpected !== normalizedInput) {
+    if (
+      normalizedExpected !== normalizedInput &&
+      !normalizedExpected.includes(normalizedInput) &&
+      !normalizedInput.includes(normalizedExpected)
+    ) {
       return {
         valid: false,
         error: `Recipient name mismatch. Server verified name is "${rec.recipientName}". Client-provided name "${recipientName}" does not match.`,
       };
     }
 
-    // Validate routing number if provided
+    // Validate routing number against authoritative bank record
     if (routingNumber) {
-      const cleanRouting = routingNumber.trim();
-      if (cleanRouting !== rec.routingNumber) {
+      const cleanRouting = routingNumber.trim().replace(/\s+/g, '');
+      const expectedRouting = targetBank.routingNumber.replace(/\s+/g, '');
+      if (cleanRouting !== expectedRouting) {
         return {
           valid: false,
-          error: `Routing number "${cleanRouting}" does not match authoritative routing number "${rec.routingNumber}" for ${rec.bankName}.`,
+          error: `Routing number "${cleanRouting}" does not match authoritative routing number "${targetBank.routingNumber}" for ${targetBank.name}.`,
         };
       }
+    } else if (!verification.isPreviouslyUsed) {
+      return {
+        valid: false,
+        error: `Routing number is required for new recipient at ${targetBank.name}.`,
+      };
     }
 
-    // Validate SWIFT/BIC code if provided
+    // Validate SWIFT/BIC code against authoritative bank record
     if (swiftCode) {
       const cleanSwift = swiftCode.trim().toUpperCase();
-      if (cleanSwift !== rec.swiftCode.toUpperCase()) {
+      const expectedSwift = targetBank.swiftCode.toUpperCase();
+      const matches =
+        cleanSwift === expectedSwift ||
+        cleanSwift === `${expectedSwift}XXX` ||
+        (expectedSwift.length === 11 && cleanSwift === expectedSwift.slice(0, 8));
+      if (!matches) {
         return {
           valid: false,
-          error: `SWIFT/BIC code "${cleanSwift}" does not match official institution SWIFT identifier "${rec.swiftCode}" for ${rec.bankName}.`,
+          error: `SWIFT/BIC code "${cleanSwift}" does not match official institution SWIFT identifier "${targetBank.swiftCode}" for ${targetBank.name}.`,
         };
       }
+    } else if (!verification.isPreviouslyUsed) {
+      return {
+        valid: false,
+        error: `SWIFT/BIC code is required for new recipient at ${targetBank.name}.`,
+      };
     }
 
     return {
       valid: true,
-      validatedRecipient: rec,
+      validatedRecipient: {
+        ...rec,
+        routingNumber: routingNumber || targetBank.routingNumber,
+        swiftCode: swiftCode || targetBank.swiftCode,
+      },
     };
   }
+
 }

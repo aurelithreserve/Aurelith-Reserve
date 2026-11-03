@@ -22,6 +22,7 @@ import { Article } from './types';
 import { useBankingAuth } from './context/BankingAuthContext';
 import { SignInPage } from './components/auth/SignInPage';
 import { RegisterPage } from './components/auth/RegisterPage';
+import { NewDeviceVerificationScreen } from './components/auth/NewDeviceVerificationScreen';
 import { BankingLayout, BankingTab } from './components/banking/BankingLayout';
 import { BankingHomeScreen } from './components/banking/BankingHomeScreen';
 import { BankingOverview } from './components/banking/BankingOverview';
@@ -43,14 +44,43 @@ import { BankTransaction } from './types/banking';
 
 import { FooterContentPage } from './components/footer/FooterContentPage';
 import { FOOTER_PAGES } from './data/footerContent';
+import { CipherControlPanel } from './components/cipher/CipherControlPanel';
+import { useTheme } from './context/ThemeContext';
+import lightLogo from './assets/images/aurelith_logo_light.png';
+import darkLogo from './assets/images/aurelith_logo_dark.png';
 
-type PageType = 'home' | 'contact' | 'open-account' | 'sign-in' | 'register' | 'banking' | 'footer-page';
+type PageType = 'home' | 'contact' | 'open-account' | 'sign-in' | 'register' | 'banking' | 'footer-page' | 'cipher';
 
 export default function App() {
-  const { user } = useBankingAuth();
+  const { isDark } = useTheme();
+  const { user, loading, pendingVerification, cancelDeviceVerification } = useBankingAuth();
+
+  const VALID_BANKING_TABS: BankingTab[] = [
+    'home', 'overview', 'accounts', 'transfers', 'bills', 'cards',
+    'loans', 'savings', 'transactions', 'statements', 'notifications',
+    'profile', 'settings', 'support'
+  ];
 
   const [currentPage, setCurrentPage] = useState<PageType>('home');
-  const [currentBankingTab, setCurrentBankingTab] = useState<BankingTab>('home');
+  const [currentBankingTab, setCurrentBankingTab] = useState<BankingTab>(() => {
+    if (typeof window !== 'undefined') {
+      const pathname = window.location.pathname.toLowerCase().replace(/\/$/, '') || '/';
+      if (pathname.startsWith('/banking') || pathname.startsWith('/dashboard')) {
+        const parts = pathname.split('/').filter(Boolean);
+        const subTab = parts[1] as BankingTab;
+        if (subTab && VALID_BANKING_TABS.includes(subTab)) {
+          return subTab;
+        }
+      }
+      try {
+        const savedTab = sessionStorage.getItem('ar_active_banking_tab') as BankingTab;
+        if (savedTab && VALID_BANKING_TABS.includes(savedTab)) {
+          return savedTab;
+        }
+      } catch {}
+    }
+    return 'home';
+  });
   const [selectedTransaction, setSelectedTransaction] = useState<BankTransaction | null>(null);
   const [selectedAccountType, setSelectedAccountType] = useState<string>('Premier Checking');
 
@@ -59,6 +89,18 @@ export default function App() {
   const [locationsOpen, setLocationsOpen] = useState(false);
   const [selectedArticle, setSelectedArticle] = useState<Article | null>(null);
   const [activeFooterPageId, setActiveFooterPageId] = useState<string>('who-we-are');
+
+  // Tab selection handler that updates state, sessionStorage, and browser URL history
+  const handleSelectBankingTab = (tab: BankingTab) => {
+    setCurrentBankingTab(tab);
+    try {
+      sessionStorage.setItem('ar_active_banking_tab', tab);
+      const targetUrl = tab === 'home' ? '/banking' : `/banking/${tab}`;
+      if (window.location.pathname !== targetUrl) {
+        window.history.pushState(null, '', targetUrl);
+      }
+    } catch {}
+  };
 
   // Synchronize URL pathname & hash with application views (on initial mount, popstate, and hashchange)
   useEffect(() => {
@@ -80,7 +122,9 @@ export default function App() {
       }
 
       // 2. Check primary application routes
-      if (pathname === '/sign-in' || pathname === '/login') {
+      if (pathname === '/cipher' || pathname.startsWith('/cipher')) {
+        setCurrentPage('cipher');
+      } else if (pathname === '/sign-in' || pathname === '/login') {
         setCurrentPage('sign-in');
       } else if (pathname === '/register' || pathname === '/signup') {
         setCurrentPage('register');
@@ -92,13 +136,18 @@ export default function App() {
         // Parse banking sub-tab if specified (e.g. /banking/transfers)
         const parts = pathname.split('/').filter(Boolean);
         const subTab = parts[1] as BankingTab;
-        const validTabs: BankingTab[] = [
-          'home', 'overview', 'accounts', 'transfers', 'bills', 'cards',
-          'loans', 'savings', 'transactions', 'statements', 'notifications',
-          'profile', 'settings', 'support'
-        ];
-        if (subTab && validTabs.includes(subTab)) {
+        if (subTab && VALID_BANKING_TABS.includes(subTab)) {
           setCurrentBankingTab(subTab);
+          try {
+            sessionStorage.setItem('ar_active_banking_tab', subTab);
+          } catch {}
+        } else {
+          try {
+            const saved = sessionStorage.getItem('ar_active_banking_tab') as BankingTab;
+            if (saved && VALID_BANKING_TABS.includes(saved)) {
+              setCurrentBankingTab(saved);
+            }
+          } catch {}
         }
         setCurrentPage('banking');
       } else {
@@ -116,23 +165,92 @@ export default function App() {
     };
   }, []);
 
-  // If user signs out while on banking dashboard, return smoothly to home
+  // Automatic session restoration & strict routing access synchronization
   useEffect(() => {
-    if (!user && currentPage === 'banking') {
-      setCurrentPage('home');
-      try {
-        if (window.location.pathname.startsWith('/banking')) {
-          window.history.pushState(null, '', '/');
+    if (loading) return;
+
+    // 1. Authenticated customer & Cipher operator session restoration
+    if (user && !pendingVerification) {
+      const isCipher = user.role === 'cipher' || user.email?.toLowerCase() === 'contact.cga.usa@gmail.com';
+      const pathname = window.location.pathname.toLowerCase().replace(/\/$/, '') || '/';
+
+      if (isCipher) {
+        // Cipher administrative identity must ALWAYS be in Cipher Control Panel (/cipher)
+        // Cipher is strictly isolated from ordinary customer banking views
+        if (currentPage !== 'cipher' || pathname !== '/cipher') {
+          setCurrentPage('cipher');
+          try {
+            window.history.replaceState(null, '', '/cipher');
+          } catch {}
         }
-      } catch {}
+      } else {
+        // ORDINARY CUSTOMER
+        // 1. Strict separation: Ordinary customers must NEVER access Cipher Control Panel
+        if (currentPage === 'cipher' || pathname === '/cipher' || pathname.startsWith('/cipher')) {
+          const targetTab = currentBankingTab || 'home';
+          const targetUrl = targetTab === 'home' ? '/banking' : `/banking/${targetTab}`;
+          setCurrentPage('banking');
+          try {
+            window.history.replaceState(null, '', targetUrl);
+          } catch {}
+          return;
+        }
+
+        // 2. Persistent Customer Login:
+        // When customer refreshes or reopens at '/', '/sign-in', '/register', etc.
+        // Keep them inside their authenticated banking dashboard, preserving their exact sub-tab
+        if (pathname === '/' || pathname === '/sign-in' || pathname === '/login' || pathname === '/register') {
+          let targetTab: BankingTab = currentBankingTab;
+          try {
+            const saved = sessionStorage.getItem('ar_active_banking_tab') as BankingTab;
+            if (saved && VALID_BANKING_TABS.includes(saved)) {
+              targetTab = saved;
+              setCurrentBankingTab(saved);
+            }
+          } catch {}
+
+          setCurrentPage('banking');
+          try {
+            const targetUrl = targetTab === 'home' ? '/banking' : `/banking/${targetTab}`;
+            window.history.replaceState(null, '', targetUrl);
+          } catch {}
+        } else if (pathname.startsWith('/banking') || pathname.startsWith('/dashboard')) {
+          if (currentPage !== 'banking') {
+            setCurrentPage('banking');
+          }
+        }
+      }
     }
-  }, [user, currentPage]);
+
+    // 2. Unauthenticated visitor handling
+    if (!user) {
+      // If unauthenticated visitor is on protected banking dashboard, return cleanly to home
+      if (currentPage === 'banking') {
+        setCurrentPage('home');
+        try {
+          if (window.location.pathname.startsWith('/banking') || window.location.pathname.startsWith('/dashboard')) {
+            window.history.replaceState(null, '', '/');
+          }
+        } catch {}
+      }
+    }
+  }, [user, loading, pendingVerification, currentPage, currentBankingTab]);
 
   const handleNavigateHome = () => {
     setCurrentPage('home');
     try {
       if (window.location.pathname !== '/' || window.location.hash) {
         window.history.pushState(null, '', '/');
+      }
+    } catch {}
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleNavigateCipher = () => {
+    setCurrentPage('cipher');
+    try {
+      if (window.location.pathname !== '/cipher') {
+        window.history.pushState(null, '', '/cipher');
       }
     } catch {}
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -186,10 +304,14 @@ export default function App() {
 
   const handleNavigateBanking = (tab: BankingTab = 'home') => {
     setCurrentBankingTab(tab);
-    setCurrentPage('banking');
     try {
-      window.history.pushState(null, '', tab === 'home' ? '/banking' : `/banking/${tab}`);
+      sessionStorage.setItem('ar_active_banking_tab', tab);
+      const targetUrl = tab === 'home' ? '/banking' : `/banking/${tab}`;
+      if (window.location.pathname !== targetUrl) {
+        window.history.pushState(null, '', targetUrl);
+      }
     } catch {}
+    setCurrentPage('banking');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -205,35 +327,79 @@ export default function App() {
     alert('Nancy Nicholson has trusted Aurelith Reserve for over 30 years for commercial loans and business growth in Texas.');
   };
 
+  // 0. AUTHENTICATION INITIALIZATION / RESTORATION STATE
+  // Seamless brand loading screen without flashing public welcome page
+  if (loading) {
+    const logoSrc = isDark ? darkLogo : lightLogo;
+    return (
+      <div className="min-h-screen bg-white dark:bg-[#0B111E] flex flex-col items-center justify-center p-6 text-center select-none font-sans transition-colors duration-150">
+        <div className="flex flex-col items-center animate-fadeIn">
+          <img
+            src={logoSrc}
+            alt="Aurelith Reserve"
+            onError={(e) => {
+              const fallback = isDark ? 'https://i.imgur.com/cJJVKa4.png' : 'https://i.imgur.com/HWWeYB7.png';
+              if (e.currentTarget.src !== fallback) {
+                e.currentTarget.src = fallback;
+              }
+            }}
+            className="h-16 sm:h-20 w-auto object-contain mb-4 select-none pointer-events-none"
+            loading="eager"
+          />
+          <h1 className="text-base sm:text-lg font-extrabold uppercase tracking-[0.24em] text-[#1C2B4C] dark:text-white font-sans">
+            AURELITH RESERVE
+          </h1>
+          <p className="text-[10px] sm:text-[11.5px] uppercase tracking-[0.22em] font-semibold text-[#C8102E] dark:text-red-400 mt-1.5">
+            Private Banking &amp; Digital Treasury
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // 0B. NEW-DEVICE SECURITY VERIFICATION CHALLENGE
+  // Enforces limited access: restricts sensitive banking operations until verified
+  if (user && pendingVerification) {
+    return (
+      <NewDeviceVerificationScreen
+        challenge={pendingVerification}
+        onVerified={() => {
+          handleNavigateBanking('home');
+        }}
+        onCancel={cancelDeviceVerification}
+      />
+    );
+  }
+
   // 1. BANKING DASHBOARD ROUTE
   if (currentPage === 'banking' && user) {
     return (
       <>
         <BankingLayout
           currentTab={currentBankingTab}
-          onSelectTab={setCurrentBankingTab}
+          onSelectTab={handleSelectBankingTab}
           onNavigateHome={handleNavigateHome}
         >
           {currentBankingTab === 'home' && (
             <BankingHomeScreen
-              onSelectTab={setCurrentBankingTab}
+              onSelectTab={handleSelectBankingTab}
               onOpenTransactionDetails={(tx) => setSelectedTransaction(tx)}
             />
           )}
 
           {currentBankingTab === 'overview' && (
             <BankingOverview
-              onSelectTab={setCurrentBankingTab}
+              onSelectTab={handleSelectBankingTab}
               onOpenTransactionDetails={(tx) => setSelectedTransaction(tx)}
             />
           )}
 
           {currentBankingTab === 'accounts' && (
-            <AccountsView onSelectTab={setCurrentBankingTab} />
+            <AccountsView onSelectTab={handleSelectBankingTab} />
           )}
 
           {currentBankingTab === 'transfers' && (
-            <TransfersView onSuccessReturn={() => setCurrentBankingTab('home')} />
+            <TransfersView onSuccessReturn={() => handleSelectBankingTab('home')} />
           )}
 
           {currentBankingTab === 'bills' && <BillsAndPaymentsView />}
@@ -247,8 +413,8 @@ export default function App() {
           {currentBankingTab === 'transactions' && (
             <TransactionsView
               onOpenDetails={(tx) => setSelectedTransaction(tx)}
-              onSelectTab={setCurrentBankingTab}
-              onOpenStatements={() => setCurrentBankingTab('statements')}
+              onSelectTab={handleSelectBankingTab}
+              onOpenStatements={() => handleSelectBankingTab('statements')}
             />
           )}
 
@@ -257,7 +423,7 @@ export default function App() {
           {currentBankingTab === 'notifications' && <NotificationsView />}
 
           {currentBankingTab === 'profile' && (
-            <ProfileSettingsView onNavigateSupport={() => setCurrentBankingTab('support')} />
+            <ProfileSettingsView onNavigateSupport={() => handleSelectBankingTab('support')} />
           )}
 
           {currentBankingTab === 'settings' && <SettingsView />}
@@ -275,12 +441,37 @@ export default function App() {
     );
   }
 
+  // CIPHER ADMINISTRATIVE CONTROL PANEL (HIDDEN ROUTE /cipher)
+  if (currentPage === 'cipher') {
+    // If ordinary customer (authenticated with role !== cipher and not designated email), strictly block
+    if (user && user.role !== 'cipher' && user.email?.toLowerCase() !== 'contact.cga.usa@gmail.com') {
+      return (
+        <div className="min-h-screen bg-[#070D1E] flex flex-col items-center justify-center p-6 text-white animate-fadeIn font-sans">
+          <div className="max-w-md w-full bg-[#10192A] border border-red-900/50 rounded-3xl p-8 shadow-2xl text-center space-y-6">
+            <h1 className="text-xl font-bold tracking-wider text-white font-mono">ACCESS RESTRICTED</h1>
+            <p className="text-xs text-slate-400">
+              Customer accounts do not possess administrative privileges.
+            </p>
+            <button
+              onClick={() => handleNavigateBanking('home')}
+              className="w-full py-3 px-6 bg-red-700 hover:bg-red-600 text-white font-bold text-xs rounded-xl cursor-pointer transition-colors"
+            >
+              Return to Banking Dashboard
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return <CipherControlPanel onNavigateHome={handleNavigateHome} />;
+  }
+
   // 2. SIGN IN ROUTE
   if (currentPage === 'sign-in') {
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-[#0B111E] flex flex-col font-sans transition-colors duration-150">
         <SignInPage
           onSuccess={() => handleNavigateBanking('home')}
+          onNavigateCipher={handleNavigateCipher}
           onNavigateRegister={handleOpenAccountOnline}
           onNavigateHome={handleNavigateHome}
         />
@@ -409,6 +600,7 @@ export default function App() {
         isOpen={loginOpen}
         onClose={() => setLoginOpen(false)}
         onNavigateBanking={() => handleNavigateBanking('home')}
+        onNavigateCipher={handleNavigateCipher}
         onNavigateRegister={handleOpenAccountOnline}
         onNavigateSignIn={handleOpenSignIn}
       />

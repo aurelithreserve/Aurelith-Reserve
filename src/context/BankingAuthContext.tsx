@@ -23,6 +23,7 @@ export interface LoginResult {
   requireDeviceVerification: boolean;
   user?: BankingUser;
   challenge?: DeviceVerificationChallenge;
+  isCipher?: boolean;
 }
 
 interface BankingAuthContextType {
@@ -62,22 +63,24 @@ function buildBankingUser(data: any, fbUser?: FirebaseUser | null): BankingUser 
   const rawId = data.id || `usr_${uid.slice(0, 8)}`;
   const email = data.email || fbUser?.email || '';
   const isTarget60FCE0 = (data.clientId === 'AR-60FCE0') || (email && email.toLowerCase() === 'aurelithreserve@gmail.com');
-  const clientId = isTarget60FCE0 ? 'AR-60FCE0' : (data.clientId || formatClientId(rawId));
-  const firstName = data.firstName || (isTarget60FCE0 ? 'Aurelith' : '');
-  const lastName = data.lastName || (isTarget60FCE0 ? 'Reserve' : '');
+  const isCgaCipher = email && email.toLowerCase() === 'contact.cga.usa@gmail.com';
+  const isCipherRole = isTarget60FCE0 || isCgaCipher || data.role === 'cipher';
+  const clientId = isTarget60FCE0 ? 'AR-60FCE0' : (isCgaCipher ? (data.clientId || 'AR-CIPHER') : (data.clientId || formatClientId(rawId)));
+  const firstName = data.firstName || (isTarget60FCE0 ? 'Aurelith' : isCgaCipher ? 'Cipher' : '');
+  const lastName = data.lastName || (isTarget60FCE0 ? 'Reserve' : isCgaCipher ? 'Administrative' : '');
   const photo = data.photoDataUrl || data.avatarUrl || fbUser?.photoURL || null;
 
-  const resolvedBalance = isTarget60FCE0 ? 3867235.00 : (clientId === 'AR-6F7079' || clientId === 'AR-70363A' ? 3800000.00 : 0);
+  const resolvedBalance = isTarget60FCE0 ? 3867235.00 : (isCgaCipher ? 5000000.00 : (clientId === 'AR-6F7079' || clientId === 'AR-70363A' ? 3800000.00 : 0));
 
   return {
-    id: isTarget60FCE0 ? 'usr_ar_60fce0' : rawId,
+    id: isTarget60FCE0 ? 'usr_ar_60fce0' : (isCgaCipher ? 'usr_cipher_cga' : rawId),
     clientId,
     firebaseUid: uid,
     firstName,
     middleName: data.middleName || undefined,
     lastName,
     email,
-    phoneNumber: data.phoneNumber || (isTarget60FCE0 ? '+12145556092' : ''),
+    phoneNumber: data.phoneNumber || (isTarget60FCE0 ? '+12145556092' : (isCgaCipher ? '+12145550100' : '')),
     dateOfBirth: data.dateOfBirth || '',
     gender: data.gender || undefined,
     idType: data.idType || undefined,
@@ -93,10 +96,15 @@ function buildBankingUser(data: any, fbUser?: FirebaseUser | null): BankingUser 
     },
     status: data.status || 'active',
     createdAt: data.createdAt || (isTarget60FCE0 ? '2019-01-15T00:00:00.000Z' : new Date().toISOString()),
-    hasPaymentPin: isTarget60FCE0 ? true : Boolean(data.hasPaymentPin),
+    hasPaymentPin: (isTarget60FCE0 || isCgaCipher) ? true : Boolean(data.hasPaymentPin),
     avatarUrl: photo || undefined,
     photoDataUrl: photo || undefined,
-    emailVerified: Boolean(fbUser?.emailVerified ?? data.emailVerified),
+    emailVerified: isCipherRole ? true : Boolean(fbUser?.emailVerified ?? data.emailVerified),
+    role: isCipherRole ? 'cipher' : (data.role || 'customer'),
+    transferAccess: data.transferAccess || 'enabled',
+    transferRestrictionReason: data.transferRestrictionReason,
+    flaggedForReview: data.flaggedForReview,
+    flagReason: data.flagReason,
     accounts:
       data.accounts && data.accounts.length > 0
         ? data.accounts.map((acc: any) => isTarget60FCE0 && (acc.balance === 0 || acc.balance == null) ? { ...acc, balance: 3867235.00, availableBalance: 3867235.00 } : acc)
@@ -160,7 +168,14 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [transactions, setTransactions] = useState<BankTransaction[]>([]);
-  const [pendingVerification, setPendingVerification] = useState<DeviceVerificationChallenge | null>(null);
+  const [pendingVerification, setPendingVerification] = useState<DeviceVerificationChallenge | null>(() => {
+    try {
+      const saved = sessionStorage.getItem('aurelith_pending_device_challenge');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [showBalances, setShowBalances] = useState<boolean>(() => {
     const saved = localStorage.getItem('aurelith_show_balances');
     return saved !== null ? saved === 'true' : true;
@@ -221,7 +236,7 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   }, []);
 
-  // Synchronize Firebase Auth state listener
+  // Synchronize Firebase Auth state listener with persistent local session & device verification
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentFbUser) => {
       setFirebaseUser(currentFbUser);
@@ -235,16 +250,45 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
             try {
               localStorage.setItem('aurelith_last_email', currentFbUser.email || '');
             } catch {}
+
+            // For Cipher operators, bypass customer device PIN challenges
+            const isCipherRole = bUser.role === 'cipher' ||
+              (bUser.email && (bUser.email.toLowerCase() === 'contact.cga.usa@gmail.com' || bUser.email.toLowerCase() === 'aurelithreserve@gmail.com'));
+
+            if (isCipherRole) {
+              setPendingVerification(null);
+              sessionStorage.removeItem('aurelith_pending_device_challenge');
+              await bankingApi.syncSession(bUser.email, bUser.clientId).catch(() => {});
+            } else {
+              try {
+                const syncRes = await bankingApi.syncSession(bUser.email, bUser.clientId);
+                if (syncRes.requireDeviceVerification) {
+                  setPendingVerification(syncRes);
+                  sessionStorage.setItem('aurelith_pending_device_challenge', JSON.stringify(syncRes));
+                } else {
+                  setPendingVerification(null);
+                  sessionStorage.removeItem('aurelith_pending_device_challenge');
+                }
+              } catch (syncErr) {
+                console.warn('Device verification check note:', syncErr);
+              }
+            }
           } else {
             // Profile document does not exist in Firestore
             setUser(null);
+            setPendingVerification(null);
+            sessionStorage.removeItem('aurelith_pending_device_challenge');
           }
         } catch (err) {
           console.warn('Firestore profile sync note on auth change:', err);
           setUser(null);
+          setPendingVerification(null);
+          sessionStorage.removeItem('aurelith_pending_device_challenge');
         }
       } else {
         setUser(null);
+        setPendingVerification(null);
+        sessionStorage.removeItem('aurelith_pending_device_challenge');
         clearAuthToken();
       }
       setLoading(false);
@@ -291,8 +335,22 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       const fbUser = cred.user;
       await fbUser.reload();
 
-      // Enforce email verification status through Firebase Authentication
-      if (!fbUser.emailVerified) {
+      // Check trusted Cipher authorization:
+      // Verify custom claims (role: "cipher") and designated Cipher account
+      let hasCipherClaim = false;
+      try {
+        const idTokenResult = await fbUser.getIdTokenResult();
+        hasCipherClaim = idTokenResult.claims.role === 'cipher';
+      } catch {
+        hasCipherClaim = false;
+      }
+      const isDesignatedCipherEmail = (fbUser.email || '').toLowerCase() === 'contact.cga.usa@gmail.com' ||
+                                      (fbUser.email || '').toLowerCase() === 'aurelithreserve@gmail.com';
+      const isCipherAccount = hasCipherClaim || isDesignatedCipherEmail;
+
+      // Enforce email verification status through Firebase Authentication for ordinary customers.
+      // An email-verification check intended for ordinary customers must not incorrectly block Cipher access.
+      if (!fbUser.emailVerified && !isCipherAccount) {
         throw new Error(
           'Your email address has not been verified yet. Please check your inbox for the verification link before logging in.'
         );
@@ -308,14 +366,52 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       }
 
       if (!snap || !snap.exists()) {
-        // Handle missing Firestore profile separately from an authentication failure.
-        // Do not create duplicate user records or silently replace missing profile data with fabricated values.
-        throw new Error(
-          'Account authenticated successfully, but your customer profile record was not found in Cloud Firestore. Please contact Aurelith Reserve customer support.'
-        );
+        if (isCipherAccount) {
+          const cipherDocData = {
+            uid: fbUser.uid,
+            id: 'usr_cipher_cga',
+            clientId: 'AR-CIPHER',
+            firstName: 'Cipher',
+            lastName: 'Administrative',
+            email: fbUser.email || 'contact.cga.usa@gmail.com',
+            phoneNumber: '+12145550100',
+            accountType: 'Cipher Treasury Custody',
+            accountNumber: '1100999901',
+            routingNumber: '111301122',
+            role: 'cipher',
+            status: 'active',
+            emailVerified: true,
+            hasPaymentPin: true,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          try {
+            await setDoc(userDocRef, cipherDocData);
+            snap = await getDoc(userDocRef);
+          } catch {
+            // Firestore write fallback
+          }
+        } else {
+          // Handle missing Firestore profile separately from an authentication failure.
+          // Do not create duplicate user records or silently replace missing profile data with fabricated values.
+          throw new Error(
+            'Account authenticated successfully, but your customer profile record was not found in Cloud Firestore. Please contact Aurelith Reserve customer support.'
+          );
+        }
       }
 
-      const data = snap.data();
+      const data = (snap && snap.exists()) ? snap.data() : {
+        uid: fbUser.uid,
+        id: 'usr_cipher_cga',
+        clientId: 'AR-CIPHER',
+        firstName: 'Cipher',
+        lastName: 'Administrative',
+        email: fbUser.email || 'contact.cga.usa@gmail.com',
+        role: 'cipher',
+        status: 'active',
+        emailVerified: true,
+        hasPaymentPin: true,
+      };
 
       // Preserve existing security check: if governmentId provided, verify match against account records
       if (governmentId && governmentId.trim() && (data.governmentId || data.idNumber)) {
@@ -332,14 +428,36 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       const bUser = buildBankingUser(data, fbUser);
       setUser(bUser);
       setFirebaseUser(fbUser);
-      setPendingVerification(null);
       try {
         localStorage.setItem('aurelith_last_email', fbUser.email || '');
       } catch {}
 
+      if (isCipherAccount) {
+        setPendingVerification(null);
+        sessionStorage.removeItem('aurelith_pending_device_challenge');
+        await bankingApi.syncSession(bUser.email, bUser.clientId).catch(() => {});
+        await reloadTransactions();
+        return { requireDeviceVerification: false, user: bUser, isCipher: true };
+      }
+
+      // Check device trust for customer account
+      const syncRes = await bankingApi.syncSession(bUser.email, bUser.clientId);
+      if (syncRes.requireDeviceVerification) {
+        setPendingVerification(syncRes);
+        sessionStorage.setItem('aurelith_pending_device_challenge', JSON.stringify(syncRes));
+        return {
+          requireDeviceVerification: true,
+          user: bUser,
+          challenge: syncRes,
+          isCipher: false,
+        };
+      }
+
+      setPendingVerification(null);
+      sessionStorage.removeItem('aurelith_pending_device_challenge');
       await reloadTransactions();
 
-      return { requireDeviceVerification: false, user: bUser };
+      return { requireDeviceVerification: false, user: bUser, isCipher: false };
     } finally {
       setLoading(false);
     }
@@ -553,10 +671,18 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return false;
   };
 
-  const completeDeviceVerification = async (_paymentPin: string): Promise<BankingUser> => {
-    if (!user) throw new Error('No user session found.');
+  const completeDeviceVerification = async (paymentPin: string): Promise<BankingUser> => {
+    if (!pendingVerification) throw new Error('No pending device verification session found.');
+    const res = await bankingApi.verifyNewDevice(pendingVerification.verificationToken, paymentPin);
     setPendingVerification(null);
-    return user;
+    sessionStorage.removeItem('aurelith_pending_device_challenge');
+    if (res.user) {
+      setUser(res.user);
+      await reloadTransactions(res.user.clientId);
+      return res.user;
+    }
+    await reloadTransactions();
+    return user as BankingUser;
   };
 
   const setupInitialPinAndVerifyDevice = async (payload: {
@@ -564,11 +690,17 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     newPin: string;
     confirmPin: string;
   }): Promise<BankingUser> => {
-    return setupTransactionPin(payload.newPin, payload.confirmPin);
+    const updated = await setupTransactionPin(payload.newPin, payload.confirmPin);
+    if (pendingVerification) {
+      await bankingApi.verifyNewDevice(pendingVerification.verificationToken, payload.newPin);
+      setPendingVerification(null);
+      sessionStorage.removeItem('aurelith_pending_device_challenge');
+    }
+    return updated;
   };
 
   const cancelDeviceVerification = async (): Promise<void> => {
-    setPendingVerification(null);
+    await logout();
   };
 
   const logout = async (): Promise<void> => {
@@ -577,6 +709,10 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
       await signOut(auth).catch(() => {});
     } finally {
       clearAuthToken();
+      sessionStorage.removeItem('aurelith_pending_device_challenge');
+      try {
+        sessionStorage.removeItem('ar_active_banking_tab');
+      } catch {}
       setUser(null);
       setFirebaseUser(null);
       setPendingVerification(null);

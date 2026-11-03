@@ -93,6 +93,85 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return data as T;
 }
 
+export interface CipherStats {
+  totalRegisteredUsers: number;
+  activeAccounts: number;
+  suspendedOrRestrictedAccounts: number;
+  totalIncomingTransactions: number;
+  totalOutgoingTransactions: number;
+  totalIncomingVolume: number;
+  totalOutgoingVolume: number;
+  accountsRequiringSecurityReview: number;
+  recentTransactions: BankTransaction[];
+  totalUsers?: number;
+  activeAccountsCount?: number;
+  restrictedUsersCount?: number;
+  flaggedForReviewCount?: number;
+  outgoingVolume?: number;
+  incomingVolume?: number;
+  outgoingTransactionsCount?: number;
+  incomingTransactionsCount?: number;
+}
+
+export interface CipherUserAccount {
+  id: string;
+  accountNumber: string;
+  routingNumber?: string;
+  swiftCode?: string;
+  type: string;
+  name: string;
+  balance: number;
+  availableBalance: number;
+  status: string;
+}
+
+export interface CipherUserRecord {
+  id: string;
+  clientId: string;
+  firstName: string;
+  middleName?: string;
+  lastName: string;
+  email: string;
+  phoneNumber?: string;
+  bankName?: string;
+  role: string;
+  status: string;
+  transferAccess: 'enabled' | 'restricted';
+  transferRestrictionReason?: string;
+  flaggedForReview: boolean;
+  flagReason?: string;
+  createdAt: string;
+  accounts: CipherUserAccount[];
+  totalBalance?: number;
+}
+
+export interface CipherAuditRecord {
+  id: string;
+  timestamp: string;
+  operatorId: string;
+  operatorEmail: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  previousValue?: any;
+  newValue?: any;
+  reason: string;
+  status: 'success' | 'failed' | 'flagged';
+  metadata?: any;
+}
+
+export interface CipherAppConfig {
+  maintenanceNoticeEnabled: boolean;
+  maintenanceNoticeText: string;
+  maintenanceSeverity: 'info' | 'warning' | 'alert';
+  globalTransfersEnabled: boolean;
+  customerServiceNoticeEnabled: boolean;
+  customerServicePhone: string;
+  customerServiceHours: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
 export const bankingApi = {
   // Auth
   register: async (payload: any): Promise<{ token: string; user: BankingUser; message: string }> => {
@@ -214,14 +293,16 @@ export const bankingApi = {
 
   verifyNewDevice: async (
     verificationToken: string,
-    paymentPin: string
-  ): Promise<{ token: string; user: BankingUser; message: string }> => {
+    paymentPin: string,
+    otpCode?: string
+  ): Promise<{ token: string; user: BankingUser; message: string; deviceTrustToken?: string }> => {
     const devicePayload = getDeviceAuthPayload();
     const res = await request<any>('/api/auth/verify-new-device', {
       method: 'POST',
       body: JSON.stringify({
         verificationToken,
         paymentPin,
+        otpCode,
         ...devicePayload,
       }),
     });
@@ -231,6 +312,15 @@ export const bankingApi = {
       setDeviceTrustToken(res.deviceTrustToken);
     }
     return res;
+  },
+
+  sendDeviceOtp: async (
+    verificationToken: string
+  ): Promise<{ success: boolean; message: string; maskedDestination: string; demoCode?: string }> => {
+    return request('/api/auth/send-device-otp', {
+      method: 'POST',
+      body: JSON.stringify({ verificationToken }),
+    });
   },
 
   setupInitialPinForDevice: async (payload: {
@@ -321,17 +411,31 @@ export const bankingApi = {
     bankName?: string;
     accountNumber: string;
   }): Promise<RecipientVerificationResponse> => {
-    const cleanAcc = (payload.accountNumber || '').replace(/[^0-9]/g, '');
+    try {
+      const serverRes = await request<RecipientVerificationResponse>('/api/banking/verify-recipient', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      if (serverRes && typeof serverRes.verified === 'boolean') {
+        return serverRes;
+      }
+    } catch {
+      // Server endpoint not available or static deployment; fall through to verified directory
+    }
+
+    const cleanAcc = (payload.accountNumber || '').replace(/[\s\r\n\t]+/g, '').replace(/\D/g, '');
     const known = KNOWN_VERIFIED_RECIPIENTS[cleanAcc];
     if (known) {
       return {
         verified: true,
+        isPreviouslyUsed: false,
+        source: 'Authorized Interbank Clearing Directory (FedACH / Fedwire Verified)',
         recipient: {
           accountNumber: cleanAcc,
           recipientName: known.recipientName,
           bankName: payload.bankName || known.bankName,
-          routingNumber: known.routingNumber,
-          swiftCode: known.swiftCode,
+          routingNumber: '', // BLANK for new recipient
+          swiftCode: '', // BLANK for new recipient
           accountType: known.accountType,
           status: 'eligible',
           notes: 'Pre-cleared interbank routing destination.',
@@ -343,19 +447,83 @@ export const bankingApi = {
       (b) => b.name === payload.bankName || b.shortName === payload.bankName
     );
 
+    if (payload.bankName && matchedBank) {
+      return {
+        verified: true,
+        isPreviouslyUsed: false,
+        source: 'Authorized Interbank Clearing Directory (FedACH / Fedwire Verified)',
+        recipient: {
+          accountNumber: cleanAcc,
+          recipientName: 'Verified Account Holder',
+          bankName: matchedBank.name,
+          routingNumber: '', // BLANK for new recipient
+          swiftCode: '', // BLANK for new recipient
+          accountType: 'Commercial / Personal Deposit Account',
+          status: 'eligible',
+          notes: 'Eligible clearing network participant.',
+        },
+      };
+    }
+
     return {
-      verified: true,
-      recipient: {
-        accountNumber: cleanAcc,
-        recipientName: 'Verified Account Holder',
-        bankName: payload.bankName || 'Supported Financial Institution',
-        routingNumber: matchedBank?.routingNumber || '111000614',
-        swiftCode: matchedBank?.swiftCode || 'AURUS33D',
-        accountType: 'Commercial / Personal Deposit Account',
-        status: 'eligible',
-        notes: 'Eligible clearing network participant.',
-      },
+      verified: false,
+      error: `No verified account found matching "${cleanAcc}" in the authorized interbank clearing directory. Please verify the account number with the recipient.`,
     };
+  },
+
+  validateRoutingAndSwift: async (payload: {
+    bankName: string;
+    routingNumber?: string;
+    swiftCode?: string;
+  }): Promise<{
+    valid: boolean;
+    routingValid: boolean;
+    swiftValid: boolean;
+    routingError?: string;
+    swiftError?: string;
+    authoritativeRouting?: string;
+    authoritativeSwift?: string;
+  }> => {
+    try {
+      return await request('/api/banking/validate-routing-swift', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      const bank = SUPPORTED_BANKS.find(
+        (b) =>
+          b.name.toLowerCase() === payload.bankName.toLowerCase() ||
+          b.shortName.toLowerCase() === payload.bankName.toLowerCase()
+      );
+      if (!bank) {
+        return { valid: false, routingValid: false, swiftValid: false, routingError: 'Unrecognized bank.' };
+      }
+      const routingValid = !payload.routingNumber
+        ? false
+        : payload.routingNumber.trim().replace(/\s+/g, '') === bank.routingNumber.replace(/\s+/g, '');
+      const cleanSwift = (payload.swiftCode || '').trim().toUpperCase();
+      const expectedSwift = bank.swiftCode.toUpperCase();
+      const swiftValid = !payload.swiftCode
+        ? false
+        : cleanSwift === expectedSwift ||
+          cleanSwift === `${expectedSwift}XXX` ||
+          (expectedSwift.length === 11 && cleanSwift === expectedSwift.slice(0, 8));
+      return {
+        valid: routingValid && swiftValid,
+        routingValid,
+        swiftValid,
+        routingError:
+          payload.routingNumber && payload.routingNumber.length >= 9 && !routingValid
+            ? `Routing number does not match ${bank.name} records.`
+            : undefined,
+        swiftError:
+          payload.swiftCode && payload.swiftCode.length >= 8 && !swiftValid
+            ? `SWIFT code does not match ${bank.name} records.`
+            : undefined,
+        authoritativeRouting: bank.routingNumber,
+        authoritativeSwift: bank.swiftCode,
+      };
+    }
   },
 
   // Transfers
@@ -712,5 +880,211 @@ export const bankingApi = {
       method: 'POST',
       body: JSON.stringify({ currentDeviceId: getOrCreateDeviceId() }),
     });
+  },
+
+  // Session Synchronization for Firebase Auth Users (with Device Recognition)
+  syncSession: async (
+    email?: string,
+    clientId?: string
+  ): Promise<
+    | { requireDeviceVerification: false; token: string; user: BankingUser; isCipher?: boolean }
+    | DeviceVerificationChallenge
+  > => {
+    const devicePayload = getDeviceAuthPayload();
+    const res = await request<any>('/api/auth/sync-session', {
+      method: 'POST',
+      body: JSON.stringify({
+        email,
+        clientId,
+        ...devicePayload,
+      }),
+    });
+    if (res.requireDeviceVerification) {
+      return {
+        requireDeviceVerification: true,
+        verificationToken: res.verificationToken,
+        hasPaymentPin: Boolean(res.hasPaymentPin),
+        maskedEmail: res.maskedEmail,
+        maskedPhone: res.maskedPhone,
+        deviceInfo: res.deviceInfo || { deviceName: 'Unknown Device' },
+        message: res.message,
+      };
+    }
+    if (res.token) {
+      setAuthToken(res.token);
+    }
+    return {
+      requireDeviceVerification: false,
+      token: res.token,
+      user: res.user,
+      isCipher: res.isCipher,
+    };
+  },
+
+  // Public / Customer App Config
+  getPublicAppConfig: async (): Promise<{ config: CipherAppConfig }> => {
+    return request<{ config: CipherAppConfig }>('/api/banking/app-config');
+  },
+
+  // ==========================================
+  // CIPHER CONTROL PANEL API METHODS
+  // Server-Side Authorization Verified
+  // ==========================================
+
+  checkCipherAuth: async (): Promise<{
+    authorized: boolean;
+    role: string;
+    operator: { id: string; email: string; name: string; clientId?: string };
+    email?: string;
+    error?: string;
+  }> => {
+    return request('/api/cipher/auth-check');
+  },
+
+  getCipherStats: async (): Promise<CipherStats> => {
+    return request<CipherStats>('/api/cipher/stats');
+  },
+
+  getCipherUsers: async (): Promise<{
+    users: CipherUserRecord[];
+  }> => {
+    return request('/api/cipher/users');
+  },
+
+  getCipherUser: async (
+    userId: string
+  ): Promise<{
+    user: CipherUserRecord;
+    transactions: BankTransaction[];
+    audits: CipherAuditRecord[];
+  }> => {
+    return request(`/api/cipher/users/${userId}`);
+  },
+
+  executeBalanceAdjustment: async (data: {
+    targetUserId?: string;
+    targetAccountId?: string;
+    accountId?: string;
+    type: 'credit' | 'debit';
+    amount: number;
+    reason: string;
+    reference?: string;
+  }): Promise<{
+    message: string;
+    transaction: BankTransaction;
+    account: any;
+    audit: any;
+    newBalance?: number;
+    auditId?: string;
+  }> => {
+    const payload = {
+      targetUserId: data.targetUserId || '',
+      targetAccountId: data.targetAccountId || data.accountId || '',
+      type: data.type,
+      amount: data.amount,
+      reason: data.reason,
+      reference: data.reference,
+    };
+    return request('/api/cipher/balance-adjustment', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  setCipherTransferAccess: async (
+    targetUserIdOrData: string | { targetUserId: string; status: 'enabled' | 'restricted'; reason: string },
+    status?: 'enabled' | 'restricted',
+    reason?: string
+  ): Promise<{
+    message: string;
+    transferAccess: 'enabled' | 'restricted';
+    audit: any;
+  }> => {
+    let payload: { targetUserId: string; status: 'enabled' | 'restricted'; reason: string };
+    if (typeof targetUserIdOrData === 'object') {
+      payload = targetUserIdOrData;
+    } else {
+      payload = {
+        targetUserId: targetUserIdOrData,
+        status: status || 'enabled',
+        reason: reason || 'Authorized Cipher update',
+      };
+    }
+    return request('/api/cipher/transfer-access', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getCipherTransactions: async (filters: {
+    search?: string;
+    clientId?: string;
+    accountNumber?: string;
+    reference?: string;
+    type?: string;
+    direction?: 'credit' | 'debit';
+    status?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    minAmount?: number;
+    maxAmount?: number;
+  } = {}): Promise<{
+    transactions: Array<BankTransaction & { clientName?: string; clientId?: string; accountNumber?: string }>;
+    totalCount: number;
+  }> => {
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([key, val]) => {
+      if (val !== undefined && val !== null && val !== '') {
+        params.append(key, String(val));
+      }
+    });
+    const qs = params.toString();
+    return request(`/api/cipher/transactions${qs ? `?${qs}` : ''}`);
+  },
+
+  correctCipherTransaction: async (
+    transactionId: string,
+    payload: {
+      reason: string;
+      description?: string;
+      category?: string;
+      timestamp?: string;
+      amount?: number;
+      senderName?: string;
+      senderAccount?: string;
+      senderBank?: string;
+      recipientName?: string;
+      recipientAccount?: string;
+      recipientBank?: string;
+      status?: 'completed' | 'pending' | 'failed';
+    }
+  ): Promise<{
+    message: string;
+    transaction: any;
+    account?: any;
+    audit: any;
+  }> => {
+    return request(`/api/cipher/transactions/${transactionId}/correct`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getCipherConfig: async (): Promise<{ config: any }> => {
+    return request('/api/cipher/config');
+  },
+
+  updateCipherConfig: async (
+    config: any,
+    reason?: string
+  ): Promise<{ message: string; config: any }> => {
+    return request('/api/cipher/config', {
+      method: 'POST',
+      body: JSON.stringify({ config, reason }),
+    });
+  },
+
+  getCipherAudits: async (): Promise<{ audits: any[] }> => {
+    return request('/api/cipher/audits');
   },
 };

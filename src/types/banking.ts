@@ -98,7 +98,7 @@ export interface BankTransaction {
 export interface BankingUser {
   id: string;
   clientId?: string;
-  role?: 'customer' | 'admin';
+  role?: 'customer' | 'admin' | 'cipher';
   firstName: string;
   middleName?: string;
   lastName: string;
@@ -117,6 +117,10 @@ export interface BankingUser {
     country: string;
   };
   status: 'active' | 'pending_verification';
+  transferAccess?: 'enabled' | 'restricted';
+  transferRestrictionReason?: string;
+  flaggedForReview?: boolean;
+  flagReason?: string;
   createdAt: string;
   hasPaymentPin?: boolean;
   securitySettings?: {
@@ -159,6 +163,8 @@ export interface DeviceVerificationChallenge {
   requireDeviceVerification: true;
   verificationToken: string;
   hasPaymentPin: boolean;
+  maskedEmail?: string;
+  maskedPhone?: string;
   deviceInfo: {
     deviceName: string;
     ipAddress?: string;
@@ -280,4 +286,6 @@ export interface RecipientVerificationResponse {
   requiresBankSelection?: boolean;
   ambiguousBanks?: string[];
   source?: string;
+  isPreviouslyUsed?: boolean;
+  lastTransferDate?: string;
 }

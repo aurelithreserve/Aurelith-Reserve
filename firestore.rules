@@ -15,6 +15,16 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isCipher() {
+      return isSignedIn() && (
+        (request.auth.token.email != null && (
+          request.auth.token.email.lower() == 'contact.cga.usa@gmail.com' ||
+          request.auth.token.email.lower() == 'aurelithreserve@gmail.com'
+        )) ||
+        request.auth.token.role == 'cipher'
+      );
+    }
+
     function isValidId(id) {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -46,6 +56,8 @@ service cloud.firestore {
         && (!('avatarUrl' in data) || data.avatarUrl == null || (data.avatarUrl is string && data.avatarUrl.size() <= 350000))
         && (!('photoDataUrl' in data) || data.photoDataUrl == null || (data.photoDataUrl is string && data.photoDataUrl.size() <= 350000))
         && (!('status' in data) || (data.status in ['active', 'pending_verification']))
+        && (!('transferAccess' in data) || (data.transferAccess in ['enabled', 'restricted']))
+        && (!('role' in data) || (data.role in ['customer', 'admin', 'cipher']))
         && (!('emailVerified' in data) || data.emailVerified is bool);
     }
 
@@ -54,12 +66,25 @@ service cloud.firestore {
       allow read: if true;
     }
 
+    // System configuration (accessible to clients for announcements, editable by Cipher)
+    match /system/{docId} {
+      allow read: if true;
+      allow write: if isCipher();
+    }
+
+    // Cipher Audits
+    match /cipher_audits/{auditId} {
+      allow read: if isCipher();
+      allow create: if isCipher();
+      allow update, delete: if false; // Immutable audit log
+    }
+
     // User profile collection - strictly isolated and ABAC protected
     match /users/{userId} {
-      // Only the authenticated account owner can view their private identity record
-      allow get: if isValidId(userId) && isOwner(userId);
-      // Deny bulk listing to protect all customer PII
-      allow list: if false;
+      // Authenticated account owner or authorized Cipher operator
+      allow get: if (isValidId(userId) && isOwner(userId)) || isCipher();
+      // Allow list for Cipher operator
+      allow list: if isCipher();
       
       // Allow create if authenticated UID matches the document ID and schema is strictly valid
       allow create: if isValidId(userId) 

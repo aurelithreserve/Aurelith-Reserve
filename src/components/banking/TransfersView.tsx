@@ -12,6 +12,14 @@ import {
   Loader2,
   Users,
   Wallet,
+  Share2,
+  Download,
+  Lock,
+  X,
+  FileText,
+  Image as ImageIcon,
+  ShieldAlert,
+  MessageCircle,
 } from 'lucide-react';
 import { useBankingAuth } from '../../context/BankingAuthContext';
 import {
@@ -22,6 +30,14 @@ import {
 } from '../../types/banking';
 import { bankingApi } from '../../services/bankingApi';
 import { getAccountTier, formatCurrency } from '../../data/accountTiers';
+import {
+  shareReceipt,
+  shareViaWhatsApp,
+  saveReceiptPdf,
+  saveReceiptImage,
+  maskAccountNumber,
+} from '../../utils/receiptGenerator';
+import { TransactionPinSetupModal } from './TransactionPinSetupModal';
 import confetti from 'canvas-confetti';
 
 interface TransfersViewProps {
@@ -44,7 +60,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationError, setVerificationError] = useState('');
 
-  // Discovered Recipient (found by verification service, awaiting sender selection)
+  // Discovered Recipient (found by verification service, awaiting sender confirmation)
   const [discoveredRecipient, setDiscoveredRecipient] = useState<VerifiedRecipientAccount | null>(null);
 
   // Confirmed Recipient Details (after sender confirms / selects)
@@ -53,22 +69,22 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
   const [recipientName, setRecipientName] = useState('');
   const [wasBankAutoSelected, setWasBankAutoSelected] = useState(false);
 
-  // Field 3: Bank Name
+  // Field 2: Populated Recipient Bank Name
   const [selectedBank, setSelectedBank] = useState<BankInstitution | null>(null);
   const [verificationSource, setVerificationSource] = useState('');
   const [requiresBankSelection, setRequiresBankSelection] = useState(false);
   const [ambiguousBanks, setAmbiguousBanks] = useState<string[]>([]);
 
-  // Field 4: Routing Number
+  // Field 3: Populated Routing Number
   const [routingNumber, setRoutingNumber] = useState('');
 
-  // Field 5: SWIFT/BIC Code
+  // Field 4: Populated SWIFT/BIC Code
   const [swiftCode, setSwiftCode] = useState('');
 
-  // Field 6: Transfer Amount
+  // Field 5: Transfer Amount
   const [amount, setAmount] = useState('');
 
-  // Field 7: Payment Reference
+  // Field 6: Payment Reference
   const [paymentReference, setPaymentReference] = useState('');
 
   // Additional options
@@ -83,14 +99,57 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
 
   // Flow states
   const [isReviewing, setIsReviewing] = useState(false);
+  const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [isPinSetupModalOpen, setIsPinSetupModalOpen] = useState(false);
+  const [pinDigits, setPinDigits] = useState(['', '', '', '']);
+  const [pinError, setPinError] = useState('');
+  const [pinAttempts, setPinAttempts] = useState(0);
+  const [lockoutUntil, setLockoutUntil] = useState<number | null>(null);
+  const [lockoutRemainingSecs, setLockoutRemainingSecs] = useState(0);
+
+  // Execution & receipt states
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [receipt, setReceipt] = useState<TransferReceipt | null>(null);
+  const [showRestrictedIpPopup, setShowRestrictedIpPopup] = useState(false);
   const [copiedRef, setCopiedRef] = useState(false);
-  const [transferPaymentPin, setTransferPaymentPin] = useState('');
+  const [isSharing, setIsSharing] = useState(false);
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
 
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const bankDropdownRef = useRef<HTMLDivElement | null>(null);
+  const pinInputRefs = useRef<Array<HTMLInputElement | null>>([null, null, null, null]);
+  const isSubmittingRef = useRef<boolean>(false);
+  const verificationSeqRef = useRef<number>(0);
+
+  // Previously Used Recipient vs New Recipient
+  const [isPreviouslyUsedRecipient, setIsPreviouslyUsedRecipient] = useState(false);
+  const [lastTransferDate, setLastTransferDate] = useState<string | undefined>(undefined);
+
+  // Live validation states for Routing & SWIFT
+  const [routingValid, setRoutingValid] = useState(false);
+  const [swiftValid, setSwiftValid] = useState(false);
+  const [routingError, setRoutingError] = useState('');
+  const [swiftError, setSwiftError] = useState('');
+
+  // Lockout countdown timer
+  useEffect(() => {
+    if (!lockoutUntil) return;
+
+    const updateTimer = () => {
+      const remaining = Math.max(0, Math.ceil((lockoutUntil - Date.now()) / 1000));
+      setLockoutRemainingSecs(remaining);
+      if (remaining <= 0) {
+        setLockoutUntil(null);
+        setPinAttempts(0);
+        setPinError('');
+      }
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [lockoutUntil]);
 
   // Fetch supported banks on mount
   useEffect(() => {
@@ -125,26 +184,34 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
 
   const sourceAccount = user.accounts.find((a) => a.id === sourceAccountId) || user.accounts[0];
 
-  // Automatic Recipient Verification with debounce
-  // Resolves recipient from account number and optional bank identifier
+  // Automatic Recipient Verification with sequence tracking to eliminate race conditions
   const triggerRecipientVerification = async (accToVerify: string, bankNameToVerify?: string) => {
-    const cleanAcc = accToVerify.trim().replace(/\s+/g, '');
-    if (!cleanAcc || cleanAcc.length < 6) {
+    const cleanAcc = accToVerify.trim().replace(/[\s\r\n\t]+/g, '');
+    const digitsOnly = cleanAcc.replace(/\D/g, '');
+    if (!cleanAcc || (digitsOnly.length < 6 && cleanAcc.length < 6)) {
       setDiscoveredRecipient(null);
       setVerifiedRecipient(null);
       setIsRecipientConfirmed(false);
+      setIsPreviouslyUsedRecipient(false);
+      setLastTransferDate(undefined);
       setRecipientName('');
+      setRoutingNumber('');
+      setSwiftCode('');
+      setRoutingValid(false);
+      setSwiftValid(false);
+      setRoutingError('');
+      setSwiftError('');
       if (wasBankAutoSelected) {
         setSelectedBank(null);
-        setRoutingNumber('');
-        setSwiftCode('');
         setWasBankAutoSelected(false);
       }
       setRequiresBankSelection(false);
+      setAmbiguousBanks([]);
       setVerificationError('');
       return;
     }
 
+    const currentSeq = ++verificationSeqRef.current;
     setIsVerifying(true);
     setVerificationError('');
     setRequiresBankSelection(false);
@@ -152,142 +219,262 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
 
     try {
       const res = await bankingApi.verifyRecipient({
-        bankName: bankNameToVerify || selectedBank?.name,
+        bankName: bankNameToVerify, // do not constrain by stale selectedBank
         accountNumber: cleanAcc,
       });
 
+      // Discard stale responses if input changed while async request was in flight
+      if (currentSeq !== verificationSeqRef.current) return;
+
       if (res.verified && res.recipient) {
         setDiscoveredRecipient(res.recipient);
+        setVerifiedRecipient(res.recipient);
+        setIsRecipientConfirmed(true);
+        setRecipientName(res.recipient.recipientName);
         setVerificationSource(res.source || 'Authorized Interbank Clearing Directory (FedACH / Fedwire Verified)');
         setVerificationError('');
         setRequiresBankSelection(false);
+        setAmbiguousBanks([]);
+
+        const matched = supportedBanks.find(
+          (b) =>
+            b.name.toLowerCase() === res.recipient!.bankName.toLowerCase() ||
+            b.shortName.toLowerCase() === res.recipient!.bankName.toLowerCase() ||
+            res.recipient!.bankName.toLowerCase().includes(b.shortName.toLowerCase()) ||
+            b.name.toLowerCase().includes(res.recipient!.bankName.toLowerCase())
+        );
+
+        const activeBank = matched || {
+          id: 'inst_' + res.recipient.accountNumber,
+          name: res.recipient.bankName,
+          shortName: res.recipient.bankName,
+          routingNumber: res.recipient.routingNumber || '',
+          swiftCode: res.recipient.swiftCode || '',
+          country: 'United States',
+          countryCode: 'US',
+          currency: 'USD',
+          supportedRails: ['Fedwire', 'FedACH'],
+        };
+        setSelectedBank(activeBank);
+        setWasBankAutoSelected(true);
+
+        // Check if Previously Used Recipient (Section 5 & 6)
+        if (res.isPreviouslyUsed) {
+          setIsPreviouslyUsedRecipient(true);
+          setLastTransferDate(res.lastTransferDate);
+          const rNum = res.recipient.routingNumber || activeBank.routingNumber;
+          const sCode = res.recipient.swiftCode || activeBank.swiftCode;
+          setRoutingNumber(rNum);
+          setSwiftCode(sCode);
+          setRoutingValid(Boolean(rNum));
+          setSwiftValid(Boolean(sCode));
+          setRoutingError('');
+          setSwiftError('');
+        } else {
+          // Scenario A: NEW RECIPIENT -> SWIFT & Routing MUST BE BLANK!
+          setIsPreviouslyUsedRecipient(false);
+          setLastTransferDate(undefined);
+          setRoutingNumber('');
+          setSwiftCode('');
+          setRoutingValid(false);
+          setSwiftValid(false);
+          setRoutingError('');
+          setSwiftError('');
+        }
       } else if (res.requiresBankSelection) {
         setDiscoveredRecipient(null);
         setVerifiedRecipient(null);
         setIsRecipientConfirmed(false);
+        setIsPreviouslyUsedRecipient(false);
+        setLastTransferDate(undefined);
         setRecipientName('');
         setRequiresBankSelection(true);
         setAmbiguousBanks(res.ambiguousBanks || []);
-        setVerificationError(
-          res.error ||
-            'Multiple institutions match this account format. Please choose the receiving bank from the Bank Name dropdown below.'
-        );
+        setVerificationError('');
       } else {
         setDiscoveredRecipient(null);
         setVerifiedRecipient(null);
         setIsRecipientConfirmed(false);
+        setIsPreviouslyUsedRecipient(false);
+        setLastTransferDate(undefined);
         setRecipientName('');
         setRequiresBankSelection(false);
+        setAmbiguousBanks([]);
         setVerificationError(
           res.error ||
-            `No verified recipient account found matching "${cleanAcc}" in the authorized interbank directory. Please verify the account number.`
+            `Account number not found in authorized bank directory. Please check the number with the recipient.`
         );
       }
     } catch (err: any) {
+      if (currentSeq !== verificationSeqRef.current) return;
       setDiscoveredRecipient(null);
       setVerifiedRecipient(null);
       setIsRecipientConfirmed(false);
+      setIsPreviouslyUsedRecipient(false);
+      setLastTransferDate(undefined);
       setRecipientName('');
       setRequiresBankSelection(false);
+      setAmbiguousBanks([]);
       setVerificationError(err.message || 'Interbank verification request failed.');
     } finally {
-      setIsVerifying(false);
+      if (currentSeq === verificationSeqRef.current) {
+        setIsVerifying(false);
+      }
     }
   };
 
   // Handle Account Number change with debounce (automatically triggers verification)
-  const handleAccountNumberChange = (val: string) => {
-    const clean = val.replace(/\D/g, '');
+  const handleAccountNumberChange = (val: string, immediate = false) => {
+    // Normalize harmless formatting differences (spaces, tabs, newlines)
+    const clean = val.replace(/[\s\r\n\t]+/g, '');
     setAccountNumber(clean);
     setDiscoveredRecipient(null);
     setVerifiedRecipient(null);
     setIsRecipientConfirmed(false);
+    setIsPreviouslyUsedRecipient(false);
+    setLastTransferDate(undefined);
     setRecipientName('');
+    setRoutingNumber('');
+    setSwiftCode('');
+    setRoutingValid(false);
+    setSwiftValid(false);
+    setRoutingError('');
+    setSwiftError('');
     if (wasBankAutoSelected) {
       setSelectedBank(null);
-      setRoutingNumber('');
-      setSwiftCode('');
       setWasBankAutoSelected(false);
     }
     setRequiresBankSelection(false);
+    setAmbiguousBanks([]);
     setVerificationError('');
 
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
 
-    if (clean.length >= 6) {
-      debounceTimerRef.current = setTimeout(() => {
-        triggerRecipientVerification(clean, selectedBank?.name);
-      }, 400);
+    const digits = clean.replace(/\D/g, '');
+    if (clean.length >= 6 || digits.length >= 6) {
+      if (immediate) {
+        triggerRecipientVerification(clean);
+      } else {
+        debounceTimerRef.current = setTimeout(() => {
+          triggerRecipientVerification(clean);
+        }, 350);
+      }
     }
   };
 
-  // Sender clicks or selects the verified recipient to confirm intended destination
-  const handleSelectDiscoveredRecipient = (recipient: VerifiedRecipientAccount) => {
-    setVerifiedRecipient(recipient);
-    setIsRecipientConfirmed(true);
-    setRecipientName(recipient.recipientName);
-    setVerificationError('');
+  // Handle Clipboard Paste for Account Number (Section 1)
+  const handlePasteAccountNumber = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text');
+    const cleaned = pasted.trim().replace(/[\s\r\n\t]+/g, '');
+    if (cleaned) {
+      handleAccountNumberChange(cleaned, true);
+    }
+  };
 
-    // Automatically find and select the bank in supportedBanks:
-    const matched = supportedBanks.find(
-      (b) =>
-        b.name.toLowerCase() === recipient.bankName.toLowerCase() ||
-        b.shortName.toLowerCase() === recipient.bankName.toLowerCase() ||
-        recipient.bankName.toLowerCase().includes(b.shortName.toLowerCase()) ||
-        b.name.toLowerCase().includes(recipient.bankName.toLowerCase())
-    );
-
-    if (matched) {
-      setSelectedBank(matched);
-      setRoutingNumber(recipient.routingNumber || matched.routingNumber);
-      setSwiftCode(recipient.swiftCode || matched.swiftCode);
+  // Live validation for Routing Number (Section 4)
+  const handleRoutingChange = (val: string) => {
+    const clean = val.trim();
+    setRoutingNumber(clean);
+    if (!selectedBank) {
+      setRoutingValid(false);
+      setRoutingError('');
+      return;
+    }
+    const expected = selectedBank.routingNumber.replace(/\s+/g, '');
+    const cleanNoSpaces = clean.replace(/\s+/g, '');
+    if (cleanNoSpaces === expected) {
+      setRoutingValid(true);
+      setRoutingError('');
     } else {
-      const autoInst: BankInstitution = {
-        id: 'inst_' + recipient.accountNumber,
-        name: recipient.bankName,
-        shortName: recipient.bankName,
-        routingNumber: recipient.routingNumber,
-        swiftCode: recipient.swiftCode,
-        country: 'United States',
-        countryCode: 'US',
-        currency: 'USD',
-        supportedRails: ['Fedwire', 'FedACH'],
-      };
-      setSelectedBank(autoInst);
-      setRoutingNumber(recipient.routingNumber);
-      setSwiftCode(recipient.swiftCode);
+      setRoutingValid(false);
+      if (cleanNoSpaces.length >= 9 || cleanNoSpaces.length >= expected.length) {
+        setRoutingError(`Routing number does not match ${selectedBank.name} records. Expected 9-digit routing number for this institution.`);
+      } else {
+        setRoutingError('');
+      }
     }
-    setWasBankAutoSelected(true);
   };
 
+  // Live validation for SWIFT Code (Section 4)
+  const handleSwiftChange = (val: string) => {
+    const clean = val.trim().toUpperCase();
+    setSwiftCode(clean);
+    if (!selectedBank) {
+      setSwiftValid(false);
+      setSwiftError('');
+      return;
+    }
+    const expected = selectedBank.swiftCode.toUpperCase();
+    const matches = clean === expected || clean === `${expected}XXX` || (expected.length === 11 && clean === expected.slice(0, 8));
+    if (matches) {
+      setSwiftValid(true);
+      setSwiftError('');
+    } else {
+      setSwiftValid(false);
+      if (clean.length >= 8) {
+        setSwiftError(`SWIFT code does not match ${selectedBank.name} records.`);
+      } else {
+        setSwiftError('');
+      }
+    }
+  };
+
+  // Clear recipient
   const handleClearRecipient = () => {
     setDiscoveredRecipient(null);
     setVerifiedRecipient(null);
     setIsRecipientConfirmed(false);
+    setIsPreviouslyUsedRecipient(false);
+    setLastTransferDate(undefined);
     setRecipientName('');
+    setRoutingNumber('');
+    setSwiftCode('');
+    setRoutingValid(false);
+    setSwiftValid(false);
+    setRoutingError('');
+    setSwiftError('');
     if (wasBankAutoSelected) {
       setSelectedBank(null);
-      setRoutingNumber('');
-      setSwiftCode('');
       setWasBankAutoSelected(false);
     }
     setVerificationError('');
   };
 
-  // Handle Bank Selection (always available manually from the dropdown)
+  // Handle Bank Selection
   const handleSelectBank = (bank: BankInstitution) => {
     setSelectedBank(bank);
-    setRoutingNumber(bank.routingNumber);
-    setSwiftCode(bank.swiftCode);
     setIsBankDropdownOpen(false);
     setBankSearch('');
     setRequiresBankSelection(false);
+    setAmbiguousBanks([]);
     setWasBankAutoSelected(false);
     setVerificationError('');
 
-    // If an account number has already been entered, re-verify with this chosen bank
+    if (isPreviouslyUsedRecipient) {
+      setRoutingNumber(bank.routingNumber);
+      setSwiftCode(bank.swiftCode);
+      setRoutingValid(true);
+      setSwiftValid(true);
+    } else {
+      if (routingNumber) {
+        const expectedRouting = bank.routingNumber.replace(/\s+/g, '');
+        const cleanRouting = routingNumber.trim().replace(/\s+/g, '');
+        const isValid = cleanRouting === expectedRouting;
+        setRoutingValid(isValid);
+        setRoutingError(isValid ? '' : (cleanRouting.length >= 9 ? `Routing number does not match ${bank.name} records.` : ''));
+      }
+      if (swiftCode) {
+        const expectedSwift = bank.swiftCode.toUpperCase();
+        const cleanSwift = swiftCode.trim().toUpperCase();
+        const isValid = cleanSwift === expectedSwift || cleanSwift === `${expectedSwift}XXX`;
+        setSwiftValid(isValid);
+        setSwiftError(isValid ? '' : (cleanSwift.length >= 8 ? `SWIFT code does not match ${bank.name} records.` : ''));
+      }
+    }
+
     if (accountNumber.length >= 6) {
       triggerRecipientVerification(accountNumber, bank.name);
     }
@@ -299,9 +486,11 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
     setRoutingNumber(b.routingNumber || '');
     setVerificationError('');
     setIsVerifying(true);
+    setIsPreviouslyUsedRecipient(true);
     triggerRecipientVerification(b.accountNumber, b.bankName);
   };
 
+  // Action: "Review Transfer" (proceeds to Transfer Review Screen, does NOT execute or ask PIN yet)
   const handleReview = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
@@ -312,21 +501,19 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
       return;
     }
 
-    if (numAmount > 25000) {
-      setErrorMessage('Transfer amount exceeds maximum daily limit of $25,000.00.');
-      return;
-    }
+    const calculatedFee = Number((numAmount * 0.001).toFixed(2));
+    const totalRequired = Number((numAmount + calculatedFee).toFixed(2));
 
-    if (numAmount > sourceAccount.availableBalance) {
+    if (totalRequired > sourceAccount.availableBalance) {
       setErrorMessage(
-        `Insufficient available funds. Current balance in ${sourceAccount.name} is $${sourceAccount.availableBalance.toFixed(2)}.`
+        `Insufficient available funds. Transfer of $${numAmount.toFixed(2)} plus 0.1% fee ($${calculatedFee.toFixed(2)}) requires $${totalRequired.toFixed(2)}. Current available balance is $${sourceAccount.availableBalance.toFixed(2)}.`
       );
       return;
     }
 
     // Balance Range Constraint Validations
     const sourceTier = getAccountTier(sourceAccount.name);
-    if (sourceTier?.minBalance !== undefined && (sourceAccount.balance - numAmount) < sourceTier.minBalance) {
+    if (sourceTier?.minBalance !== undefined && sourceAccount.balance - totalRequired < sourceTier.minBalance) {
       setErrorMessage(
         `Transfer rejected. This transaction would leave ${sourceAccount.name} below its required Minimum balance of ${formatCurrency(sourceTier.minBalance)}.`
       );
@@ -337,7 +524,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
       const targetAcc = user.accounts.find((a) => a.accountNumber === internalTargetAccount);
       if (targetAcc) {
         const targetTier = getAccountTier(targetAcc.name);
-        if (targetTier?.maxBalance !== undefined && (targetAcc.balance + numAmount) > targetTier.maxBalance) {
+        if (targetTier?.maxBalance !== undefined && targetAcc.balance + numAmount > targetTier.maxBalance) {
           setErrorMessage(
             `Transfer rejected. This transaction would cause ${targetAcc.name} to exceed its Maximum balance limit of ${formatCurrency(targetTier.maxBalance)}.`
           );
@@ -363,8 +550,16 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
         setErrorMessage('Routing number is required for interbank wire settlement.');
         return;
       }
+      if (!routingValid) {
+        setErrorMessage(`Routing number does not match authoritative records for ${selectedBank.name}.`);
+        return;
+      }
       if (!swiftCode.trim()) {
         setErrorMessage('SWIFT/BIC code is required for bank transfer verification.');
+        return;
+      }
+      if (!swiftValid) {
+        setErrorMessage(`SWIFT/BIC code does not match authoritative records for ${selectedBank.name}.`);
         return;
       }
     } else if (transferType === 'internal') {
@@ -379,18 +574,76 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
       }
     }
 
+    // Validations passed: switch to Review Screen (no execution, no PIN prompt on screen)
     setIsReviewing(true);
   };
 
-  const handleExecuteTransfer = async () => {
-    setErrorMessage('');
+  // User clicks "Confirm and Execute Transfer" on review screen -> triggers PIN modal
+  const handleProceedToPinAuthorization = () => {
+    setPinDigits(['', '', '', '']);
+    setPinError('');
+    setIsPinModalOpen(true);
+    setTimeout(() => {
+      pinInputRefs.current[0]?.focus();
+    }, 150);
+  };
 
-    if (user?.hasPaymentPin && !transferPaymentPin.trim()) {
-      setErrorMessage('Please enter your 4-6 digit Payment Authorization PIN to authorize this transfer.');
+  // Handle PIN digit typing
+  const handlePinDigitChange = (index: number, val: string) => {
+    if (loading || isSubmittingRef.current || Boolean(lockoutUntil)) return;
+
+    const digit = val.replace(/\D/g, '').slice(-1);
+    const updated = [...pinDigits];
+    updated[index] = digit;
+    setPinDigits(updated);
+    setPinError('');
+
+    if (digit && index < 3) {
+      pinInputRefs.current[index + 1]?.focus();
+    }
+
+    // When 4th digit entered, auto-trigger execution without duplicate submissions
+    if (digit && index === 3 && updated.every((d) => d !== '')) {
+      if (!isSubmittingRef.current && !loading) {
+        isSubmittingRef.current = true;
+        const fullPin = updated.join('');
+        executeAuthorizedTransfer(fullPin);
+      }
+    }
+  };
+
+  const handlePinKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !pinDigits[index] && index > 0) {
+      pinInputRefs.current[index - 1]?.focus();
+    }
+  };
+
+  // Submit transfer to authorized processor after PIN verification
+  const executeAuthorizedTransfer = async (pinToUse: string) => {
+    if (lockoutUntil && lockoutUntil > Date.now()) {
+      setPinError(`Account locked. Please wait ${lockoutRemainingSecs} seconds.`);
+      isSubmittingRef.current = false;
+      return;
+    }
+
+    if (pinToUse.length !== 4) {
+      setPinError('Transaction PIN must consist of four numeric digits.');
+      isSubmittingRef.current = false;
+      return;
+    }
+
+    if (user?.transferAccess === 'restricted') {
+      setIsPinModalOpen(false);
+      setIsReviewing(false);
+      setPinDigits(['', '', '', '']);
+      isSubmittingRef.current = false;
+      setShowRestrictedIpPopup(true);
       return;
     }
 
     setLoading(true);
+    setErrorMessage('');
+    setPinError('');
 
     try {
       let targetAccountNum = accountNumber;
@@ -413,6 +666,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
         targetBankName = 'Aurelith Reserve';
       }
 
+      // Submit transfer payload to authorized processor
       const res = await bankingApi.transferMoney({
         sourceAccountId: sourceAccount.id,
         destinationType: transferType,
@@ -426,11 +680,16 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
         paymentReference: paymentReference.trim(),
         saveBeneficiary: transferType === 'external' ? saveBeneficiary : false,
         nickname: beneficiaryNickname.trim() || undefined,
-        paymentPin: user?.hasPaymentPin ? transferPaymentPin.trim() : undefined,
+        paymentPin: pinToUse,
       });
 
+      // Transfer successfully authorized by processor!
       setReceipt(res.receipt);
+      setIsPinModalOpen(false);
       setIsReviewing(false);
+      setPinDigits(['', '', '', '']);
+      setPinAttempts(0);
+
       await refreshUser();
       await reloadTransactions();
 
@@ -444,28 +703,75 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
         // Safe fallback
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Transfer failed to process. Please try again.');
+      const errMsg: string = err.message || '';
+
+      if (
+        (err as any)?.code === 'TRANSFER_ACCESS_RESTRICTED' ||
+        errMsg.includes('New IP detected') ||
+        errMsg.includes('Unusual activity') ||
+        errMsg.includes('RESTRICTED')
+      ) {
+        setIsPinModalOpen(false);
+        setIsReviewing(false);
+        setPinDigits(['', '', '', '']);
+        setShowRestrictedIpPopup(true);
+        return;
+      }
+
+      // Check if PIN was incorrect
+      if (errMsg.toLowerCase().includes('pin') || errMsg.toLowerCase().includes('authorization pin')) {
+        const nextAttempts = pinAttempts + 1;
+        setPinAttempts(nextAttempts);
+        setPinDigits(['', '', '', '']);
+
+        if (nextAttempts >= 5) {
+          const lockoutTime = Date.now() + 5 * 60 * 1000;
+          setLockoutUntil(lockoutTime);
+          setPinError('Too many incorrect PIN attempts. Security lockout active for 5 minutes.');
+        } else {
+          setPinError(`Incorrect Transaction PIN. ${5 - nextAttempts} attempt(s) remaining.`);
+          setTimeout(() => {
+            pinInputRefs.current[0]?.focus();
+          }, 50);
+        }
+      } else {
+        // Processor error or server processor missing
+        setErrorMessage(errMsg || 'Authorized processor rejected transfer. Please verify account parameters.');
+        setIsPinModalOpen(false);
+        setPinDigits(['', '', '', '']);
+      }
     } finally {
       setLoading(false);
+      isSubmittingRef.current = false;
     }
   };
 
   const resetForm = () => {
     setReceipt(null);
     setIsReviewing(false);
+    setIsPinModalOpen(false);
     setAmount('');
     setPaymentReference('');
     setAccountNumber('');
     setSelectedBank(null);
     setRoutingNumber('');
     setSwiftCode('');
+    setRoutingValid(false);
+    setSwiftValid(false);
+    setRoutingError('');
+    setSwiftError('');
     setVerifiedRecipient(null);
+    setIsPreviouslyUsedRecipient(false);
+    setLastTransferDate(undefined);
     setRequiresBankSelection(false);
     setAmbiguousBanks([]);
     setVerificationError('');
     setSaveBeneficiary(false);
     setBeneficiaryNickname('');
-    setTransferPaymentPin('');
+    setPinDigits(['', '', '', '']);
+    setPinError('');
+    setErrorMessage('');
+    setShareFeedback(null);
   };
 
   const copyRefToClipboard = (ref: string) => {
@@ -474,11 +780,36 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
     setTimeout(() => setCopiedRef(false), 2000);
   };
 
-  // Mask account helper
-  const maskAccount = (acc: string) => {
-    if (!acc) return '';
-    if (acc.length <= 4) return `•••• ${acc}`;
-    return `•••• •••• ${acc.slice(-4)}`;
+  // Handle Share Receipt with Web Share API and fallback
+  const handleShareReceipt = async () => {
+    if (!receipt) return;
+    setIsSharing(true);
+    setShareFeedback(null);
+    try {
+      const result = await shareReceipt(receipt);
+      if (result.shared) {
+        setShareFeedback('Receipt shared successfully.');
+      } else if (result.downloadedFallback) {
+        setShareFeedback('Receipt image downloaded to device.');
+      }
+    } catch {
+      setShareFeedback('Unable to complete sharing action.');
+    } finally {
+      setIsSharing(false);
+      setTimeout(() => setShareFeedback(null), 4000);
+    }
+  };
+
+  // Handle Save PDF
+  const handleSavePdf = () => {
+    if (!receipt) return;
+    saveReceiptPdf(receipt);
+  };
+
+  // Handle Save Image
+  const handleSaveImage = () => {
+    if (!receipt) return;
+    saveReceiptImage(receipt);
   };
 
   // Filter banks for searchable selector
@@ -491,53 +822,83 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 animate-fadeIn">
-      {/* Title */}
+      {/* Page Title */}
       <div>
         <h1 className="text-2xl font-bold text-[#1C2B4C] dark:text-white">Secure Bank Transfer</h1>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          Transfer funds with automated interbank recipient verification, instant book transfers, or domestic Fedwire/FedACH rails.
-        </p>
       </div>
 
+      {user?.transferAccess === 'restricted' && (
+        <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200 text-xs sm:text-sm font-semibold flex items-center space-x-3 shadow-xs">
+          <ShieldAlert className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+          <span>Unusual activity detected. New device. Please contact your bank.</span>
+        </div>
+      )}
+
       {receipt ? (
-        /* SUCCESS RECEIPT VIEW */
+        /* ==================================================== */
+        /* 8. TRANSFER RECEIPT SCREEN (Sent Status Confirmed)   */
+        /* Strictly no remaining account balance or PIN shown   */
+        /* ==================================================== */
         <div className="bg-white dark:bg-[#152033] rounded-3xl p-6 sm:p-10 border border-slate-200/80 dark:border-slate-800 shadow-xl max-w-xl mx-auto text-center space-y-6 animate-fadeIn">
-          <div className="w-16 h-16 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 rounded-full flex items-center justify-center mx-auto shadow-sm">
-            <CheckCircle2 className="w-10 h-10" />
+          {/* Top Brand Seal Header */}
+          <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
+            <div className="flex items-center space-x-3 text-left">
+              <div className="w-10 h-10 rounded-2xl bg-[#1C2B4C] dark:bg-slate-800 text-amber-400 border border-amber-500/40 flex items-center justify-center font-serif font-bold text-base shadow-xs">
+                AR
+              </div>
+              <div>
+                <div className="text-xs font-extrabold text-[#1C2B4C] dark:text-white uppercase tracking-wider">
+                  Aurelith Reserve
+                </div>
+                <div className="text-[10px] text-amber-600 dark:text-amber-400 font-semibold tracking-tight">
+                  Private Banking & Digital Treasury
+                </div>
+              </div>
+            </div>
+            <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 text-xs font-extrabold rounded-full border border-emerald-200 dark:border-emerald-800 uppercase tracking-wider">
+              <Check className="w-3.5 h-3.5 stroke-[3] text-emerald-600 dark:text-emerald-400" />
+              <span>Sent • Completed</span>
+            </div>
           </div>
 
           <div>
-            <span className="px-3 py-1 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-xs font-bold rounded-full border border-emerald-200 dark:border-emerald-800">
-              Transfer Settled &amp; Completed
-            </span>
-            <div className="text-3xl sm:text-4xl font-extrabold text-[#1C2B4C] dark:text-white font-mono my-2">
-              ${receipt.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            <div className="text-3xl sm:text-4xl font-extrabold text-[#1C2B4C] dark:text-white font-mono my-2.5">
+              ${receipt.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Funds debited from {receipt.sourceAccountName} and disbursed via authoritative banking clearing channels.
+              Electronic wire payment to {receipt.recipientName} successfully authorized and settled via interbank network.
             </p>
           </div>
 
           {/* Receipt Breakdown Table */}
-          <div className="bg-slate-50 dark:bg-[#10192A] rounded-2xl p-4 text-xs space-y-2.5 text-left border border-slate-200/70 dark:border-slate-800">
-            <div className="flex justify-between items-center">
-              <span className="text-slate-500 dark:text-slate-400">Reference Number:</span>
+          <div className="bg-slate-50 dark:bg-[#10192A] rounded-2xl p-4 sm:p-5 text-xs space-y-3 text-left border border-slate-200/70 dark:border-slate-800">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-200/60 dark:border-slate-800">
+              <span className="text-slate-500 dark:text-slate-400">Transaction Reference:</span>
               <div className="flex items-center space-x-1.5 font-mono font-bold text-slate-800 dark:text-slate-200">
                 <span>{receipt.reference}</span>
                 <button
+                  type="button"
                   onClick={() => copyRefToClipboard(receipt.reference)}
-                  className="p-1 hover:text-[#C8102E] dark:hover:text-red-400 cursor-pointer"
+                  className="p-1 hover:text-[#C8102E] dark:hover:text-red-400 cursor-pointer transition-colors"
                   title="Copy reference"
                 >
-                  {copiedRef ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copiedRef ? <Check className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
             </div>
 
             <div className="flex justify-between">
+              <span className="text-slate-500 dark:text-slate-400">Transfer Status:</span>
+              <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center space-x-1">
+                <Check className="w-3.5 h-3.5 stroke-[3] text-emerald-600 dark:text-emerald-400" />
+                <span>Sent • Settled via Interbank Network</span>
+              </span>
+            </div>
+
+            <div className="flex justify-between">
               <span className="text-slate-500 dark:text-slate-400">Funding Account:</span>
               <span className="font-semibold text-slate-800 dark:text-slate-200">
-                {receipt.sourceAccountName} (•••• {receipt.sourceAccountNumber.slice(-4)})
+                {receipt.sourceAccountName} ({maskAccountNumber(receipt.sourceAccountNumber)})
               </span>
             </div>
 
@@ -554,13 +915,13 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
             <div className="flex justify-between">
               <span className="text-slate-500 dark:text-slate-400">Recipient Account:</span>
               <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">
-                {maskAccount(receipt.recipientAccountNumber)}
+                {maskAccountNumber(receipt.recipientAccountNumber)}
               </span>
             </div>
 
             {receipt.routingNumber && (
               <div className="flex justify-between">
-                <span className="text-slate-500 dark:text-slate-400">Routing Number:</span>
+                <span className="text-slate-500 dark:text-slate-400">Routing Transit (ABA):</span>
                 <span className="font-mono text-slate-800 dark:text-slate-200">{receipt.routingNumber}</span>
               </div>
             )}
@@ -579,19 +940,94 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
               </div>
             )}
 
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Transfer Fee:</span>
-              <span className="font-bold text-emerald-600 dark:text-emerald-400">Free ($0.00)</span>
+            <div className="flex justify-between pt-2 border-t border-slate-200/60 dark:border-slate-800">
+              <span className="text-slate-500 dark:text-slate-400">Transfer Fee (0.1%):</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200 font-mono">
+                ${(receipt.fee ?? Number((receipt.amount * 0.001).toFixed(2))).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+              </span>
             </div>
 
-            <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Settlement Time:</span>
-              <span className="text-slate-700 dark:text-slate-300">{new Date(receipt.timestamp).toLocaleString()}</span>
+            <div className="flex justify-between pt-2 border-t border-slate-200/60 dark:border-slate-800 text-sm">
+              <span className="font-bold text-[#1C2B4C] dark:text-white">Total Amount Debited:</span>
+              <span className="font-extrabold text-[#C8102E] dark:text-red-400 font-mono">
+                ${(receipt.amount + (receipt.fee ?? Number((receipt.amount * 0.001).toFixed(2)))).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+              </span>
             </div>
+
+            <div className="flex justify-between pt-2 border-t border-slate-200/60 dark:border-slate-800 text-[11px] text-slate-400 dark:text-slate-500">
+              <span>Settlement Timestamp:</span>
+              <span>{new Date(receipt.timestamp).toLocaleString()}</span>
+            </div>
+
+            {/* Official Certification Text (Section 9) */}
+            <div className="pt-3 border-t border-slate-200/60 dark:border-slate-800 text-center space-y-1">
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
+                This electronic document certifies that the above funds transfer was authorized and debited.
+              </p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                Aurelith Reserve Private Banking • Member FDIC • Official Wire Settlement Record
+              </p>
+            </div>
+          </div>
+
+          {shareFeedback && (
+            <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-xl text-emerald-800 dark:text-emerald-300 text-xs">
+              {shareFeedback}
+            </div>
+          )}
+
+          {/* Share & Save Receipt Actions (Section 10) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+            <button
+              type="button"
+              onClick={handleShareReceipt}
+              disabled={isSharing}
+              className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[#1C2B4C] dark:text-white font-bold text-xs rounded-xl transition-colors cursor-pointer flex items-center justify-center space-x-1.5"
+            >
+              {isSharing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Share2 className="w-3.5 h-3.5 text-[#C8102E]" />
+              )}
+              <span>Share</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (receipt) shareViaWhatsApp(receipt);
+              }}
+              title="Share Receipt via WhatsApp"
+              className="py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 font-bold text-xs rounded-xl transition-colors cursor-pointer flex items-center justify-center space-x-1.5 border border-emerald-200 dark:border-emerald-800"
+            >
+              <MessageCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              <span>WhatsApp</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSavePdf}
+              title="Download PDF Receipt"
+              className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[#1C2B4C] dark:text-white font-bold text-xs rounded-xl transition-colors cursor-pointer flex items-center justify-center space-x-1"
+            >
+              <FileText className="w-3.5 h-3.5 text-red-500" />
+              <span>Save PDF</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSaveImage}
+              title="Download PNG Receipt Image"
+              className="py-2.5 px-3 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[#1C2B4C] dark:text-white font-bold text-xs rounded-xl transition-colors cursor-pointer flex items-center justify-center space-x-1"
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-blue-500" />
+              <span>Save PNG</span>
+            </button>
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 pt-2">
             <button
+              type="button"
               onClick={resetForm}
               className="flex-1 py-3 px-5 bg-[#1C2B4C] hover:bg-[#152033] dark:bg-[#C8102E] dark:hover:bg-red-700 text-white font-bold text-xs rounded-full shadow-md transition-colors cursor-pointer"
             >
@@ -599,6 +1035,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
             </button>
             {onSuccessReturn && (
               <button
+                type="button"
                 onClick={onSuccessReturn}
                 className="py-3 px-5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-full transition-colors cursor-pointer"
               >
@@ -608,21 +1045,27 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
           </div>
         </div>
       ) : isReviewing ? (
-        /* TRANSFER REVIEW & CONFIRMATION STEP */
+        /* ==================================================== */
+        /* 5. TRANSFER REVIEW SCREEN                            */
+        /* Dedicated screen with full summary.                   */
+        /* Does NOT ask for PIN here. Does NOT execute on view.  */
+        /* Actions: "Edit Transfer" and "Confirm and Execute"    */
+        /* ==================================================== */
         <div className="bg-white dark:bg-[#152033] rounded-3xl p-6 sm:p-8 border border-slate-200/80 dark:border-slate-800 shadow-md max-w-xl mx-auto space-y-6 animate-fadeIn">
           <div className="flex items-center space-x-3 pb-4 border-b border-slate-100 dark:border-slate-800">
-            <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 flex items-center justify-center font-bold">
+            <div className="w-10 h-10 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 flex items-center justify-center font-bold shrink-0">
               <ShieldCheck className="w-5 h-5 text-amber-700 dark:text-amber-400" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-[#1C2B4C] dark:text-white">Review Transfer Authorization</h3>
+              <h3 className="text-base font-bold text-[#1C2B4C] dark:text-white">Review Transfer</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Please verify recipient credentials and debit parameters before final transmission.
+                Please review your recipient banking information and transfer parameters before authorizing.
               </p>
             </div>
           </div>
 
-          <div className="p-4 bg-slate-50 dark:bg-[#10192A] rounded-2xl space-y-3 text-xs border border-slate-200/60 dark:border-slate-800">
+          {/* Full Summary Required by Section 5 */}
+          <div className="p-4 sm:p-5 bg-slate-50 dark:bg-[#10192A] rounded-2xl space-y-3 text-xs border border-slate-200/60 dark:border-slate-800">
             <div className="flex justify-between">
               <span className="text-slate-500 dark:text-slate-400">Transfer Type:</span>
               <span className="font-bold text-slate-800 dark:text-slate-200">
@@ -635,31 +1078,36 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
             </div>
 
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">From Funding Account:</span>
+              <span className="text-slate-500 dark:text-slate-400">Funding Account:</span>
               <span className="font-semibold text-slate-800 dark:text-slate-200">
-                {sourceAccount.name} (•••• {sourceAccount.accountNumber.slice(-4)})
+                {sourceAccount.name} ({maskAccountNumber(sourceAccount.accountNumber)})
               </span>
             </div>
 
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Recipient Bank:</span>
+              <span className="text-slate-500 dark:text-slate-400">Recipient Bank Name:</span>
               <span className="font-semibold text-slate-800 dark:text-slate-200">
                 {transferType === 'external' ? selectedBank?.name : 'Aurelith Reserve'}
               </span>
             </div>
 
             <div className="flex justify-between items-center">
-              <span className="text-slate-500 dark:text-slate-400">Verified Recipient Name:</span>
+              <span className="text-slate-500 dark:text-slate-400">Recipient Confirmation Info:</span>
               <span className="font-bold text-[#1C2B4C] dark:text-white flex items-center space-x-1">
-                <span>{verifiedRecipient?.recipientName || (transferType === 'internal' ? `${user.firstName} ${user.lastName}` : p2pRecipientName || 'Aurelith Client')}</span>
+                <span>
+                  {verifiedRecipient?.recipientName ||
+                    (transferType === 'internal'
+                      ? `${user.firstName} ${user.lastName}`
+                      : p2pRecipientName || 'Aurelith Client')}
+                </span>
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 inline" />
               </span>
             </div>
 
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Recipient Account Number:</span>
+              <span className="text-slate-500 dark:text-slate-400">Masked Recipient Account:</span>
               <span className="font-mono text-slate-800 dark:text-slate-200">
-                {maskAccount(
+                {maskAccountNumber(
                   transferType === 'external'
                     ? accountNumber
                     : transferType === 'internal'
@@ -672,102 +1120,88 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
             {transferType === 'external' && (
               <>
                 <div className="flex justify-between">
-                  <span className="text-slate-500 dark:text-slate-400">Verified Routing Number:</span>
+                  <span className="text-slate-500 dark:text-slate-400">Routing Number:</span>
                   <span className="font-mono text-slate-800 dark:text-slate-200">{routingNumber}</span>
                 </div>
 
                 <div className="flex justify-between">
-                  <span className="text-slate-500 dark:text-slate-400">SWIFT / BIC Identifier:</span>
+                  <span className="text-slate-500 dark:text-slate-400">SWIFT Code:</span>
                   <span className="font-mono text-slate-800 dark:text-slate-200">{swiftCode}</span>
                 </div>
               </>
             )}
 
-            {paymentReference && (
-              <div className="flex justify-between">
-                <span className="text-slate-500 dark:text-slate-400">Payment Reference:</span>
-                <span className="font-medium text-slate-800 dark:text-slate-200 italic">"{paymentReference}"</span>
-              </div>
-            )}
+            <div className="flex justify-between">
+              <span className="text-slate-500 dark:text-slate-400">Transfer Currency:</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200">USD ($)</span>
+            </div>
+
+            <div className="flex justify-between">
+              <span className="text-slate-500 dark:text-slate-400">Payment Reference:</span>
+              <span className="font-medium text-slate-800 dark:text-slate-200 italic">
+                {paymentReference ? `"${paymentReference}"` : 'General Wire Transfer'}
+              </span>
+            </div>
 
             <div className="flex justify-between pt-2 border-t border-slate-200 dark:border-slate-800">
               <span className="text-slate-500 dark:text-slate-400">Transfer Amount:</span>
               <span className="font-bold text-slate-800 dark:text-slate-200 font-mono">
-                ${parseFloat(amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                ${parseFloat(amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
 
             <div className="flex justify-between">
-              <span className="text-slate-500 dark:text-slate-400">Wire / Transfer Fee:</span>
-              <span className="font-bold text-emerald-600 dark:text-emerald-400">$0.00 (Waived)</span>
+              <span className="text-slate-500 dark:text-slate-400">Transfer Fee (0.1%):</span>
+              <span className="font-bold text-slate-800 dark:text-slate-200 font-mono">
+                ${(parseFloat(amount) * 0.001).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
             </div>
 
             <div className="flex justify-between pt-2 border-t border-slate-200 dark:border-slate-800 text-sm">
               <span className="font-bold text-[#1C2B4C] dark:text-white">Total Debit Amount:</span>
               <span className="font-extrabold text-[#C8102E] dark:text-red-400 font-mono">
-                ${parseFloat(amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                ${(parseFloat(amount) + Number((parseFloat(amount) * 0.001).toFixed(2))).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
               </span>
             </div>
           </div>
 
-          {user?.hasPaymentPin && (
-            <div className="p-4 bg-slate-50 dark:bg-[#10192A] border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2">
-              <label className="block text-xs font-bold text-[#1C2B4C] dark:text-white uppercase tracking-wider flex items-center justify-between">
-                <span>Payment Authorization PIN <span className="text-red-500">*</span></span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-normal">Security Protected</span>
-              </label>
-              <input
-                type="password"
-                maxLength={6}
-                required
-                placeholder="Enter 4-6 digit PIN"
-                value={transferPaymentPin}
-                onChange={(e) => {
-                  setTransferPaymentPin(e.target.value.replace(/[^0-9]/g, ''));
-                  setErrorMessage('');
-                }}
-                className="w-full px-4 py-2.5 bg-white dark:bg-[#152033] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white rounded-xl text-center text-lg font-mono tracking-widest font-bold focus:outline-none focus:ring-2 focus:ring-[#1C2B4C]"
-              />
-              <p className="text-[10px] text-slate-500 dark:text-slate-400 text-center">
-                Enter your configured PIN to electronically authorize and sign this transfer.
-              </p>
-            </div>
-          )}
-
           {errorMessage && (
-            <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-red-800 dark:text-red-300 text-xs flex items-center space-x-2">
+            <div className="p-3.5 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-red-800 dark:text-red-300 text-xs flex items-center space-x-2">
               <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
               <span>{errorMessage}</span>
             </div>
           )}
 
+          {/* Two Clear Actions (Requirement #5) */}
           <div className="flex gap-3 pt-2">
             <button
               type="button"
               onClick={() => setIsReviewing(false)}
-              className="flex-1 py-3 px-4 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-full transition-colors cursor-pointer"
+              className="flex-1 py-3.5 px-4 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-full transition-colors cursor-pointer"
             >
-              Modify Details
+              Edit Transfer
             </button>
             <button
               type="button"
-              disabled={loading}
-              onClick={handleExecuteTransfer}
-              className="flex-1 py-3 px-4 bg-[#C8102E] hover:bg-[#A00B22] text-white font-bold text-xs rounded-full shadow-md transition-colors flex items-center justify-center space-x-2 cursor-pointer disabled:opacity-50"
+              onClick={handleProceedToPinAuthorization}
+              className="flex-1 py-3.5 px-4 bg-[#C8102E] hover:bg-[#A00B22] text-white font-bold text-xs rounded-full shadow-md transition-colors flex items-center justify-center space-x-2 cursor-pointer"
             >
-              {loading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin mr-1" />
-                  <span>Authorizing Wire...</span>
-                </>
-              ) : (
-                <span>Confirm &amp; Execute Transfer</span>
-              )}
+              <span>Confirm and Execute</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </div>
       ) : (
-        /* MAIN TRANSFER FORM */
+        /* ==================================================== */
+        /* 3. MAIN TRANSFER FORM                                */
+        /* Exact Sequence:                                      */
+        /* 1. Recipient account number                          */
+        /* 2. Populated recipient bank name                     */
+        /* 3. Populated routing number                          */
+        /* 4. Populated SWIFT/BIC code                          */
+        /* 5. Transfer amount                                   */
+        /* 6. Payment reference                                 */
+        /* ==================================================== */
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left 2 Cols: Form */}
           <div className="lg:col-span-2 bg-white dark:bg-[#152033] rounded-3xl p-6 sm:p-8 border border-slate-200/80 dark:border-slate-800 shadow-xs">
@@ -827,210 +1261,153 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                 }`}
               >
                 <Wallet className="w-3.5 h-3.5" />
-                <span>Aurelith Client</span>
+                <span>Related Client</span>
               </button>
             </div>
 
-            {/* Source Account Selector */}
-            <div className="mb-6 p-4 bg-slate-50/70 dark:bg-[#10192A] border border-slate-200/60 dark:border-slate-800 rounded-2xl">
-              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
-                Funding Account (Debit Source)
-              </label>
-              <select
-                value={sourceAccountId}
-                onChange={(e) => setSourceAccountId(e.target.value)}
-                className="w-full px-4 py-2.5 bg-white dark:bg-[#152033] border border-slate-300 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-[#1C2B4C]"
-              >
-                {user.accounts.map((acc) => (
-                  <option key={acc.id} value={acc.id}>
-                    {acc.nickname ? `${acc.nickname} (${acc.name})` : acc.name} ({acc.accountNumber}) — Available: ${acc.availableBalance.toFixed(2)}
-                  </option>
-                ))}
-              </select>
-
-              {(() => {
-                const tier = getAccountTier(sourceAccount.name);
-                if (!tier || (tier.minBalance === undefined && tier.maxBalance === undefined)) return null;
-                return (
-                  <div className="mt-2.5 pt-2 border-t border-slate-200/60 dark:border-slate-800 flex flex-wrap items-center justify-between text-[11px] text-slate-600 dark:text-slate-400">
-                    <span className="font-medium text-slate-700 dark:text-slate-300">
-                      Product Limits ({tier.name}):
-                    </span>
-                    <div className="flex items-center space-x-3">
-                      {tier.minBalance !== undefined && (
-                        <span>
-                          Minimum balance: <span className="font-bold font-mono text-[#1C2B4C] dark:text-white">{formatCurrency(tier.minBalance)}</span>
-                        </span>
-                      )}
-                      {tier.maxBalance !== undefined && (
-                        <span>
-                          Maximum balance: <span className="font-bold font-mono text-[#1C2B4C] dark:text-white">{formatCurrency(tier.maxBalance)}</span>
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
+            {/* Available Balance Display Only (Funding Account Details & Product Limits Removed) */}
+            <div className="mb-6">
+              {user.accounts.length > 1 ? (
+                <div className="inline-block">
+                  <select
+                    value={sourceAccountId}
+                    onChange={(e) => setSourceAccountId(e.target.value)}
+                    className="text-2xl sm:text-3xl font-extrabold font-mono text-[#1C2B4C] dark:text-white bg-transparent border-0 cursor-pointer focus:outline-none focus:ring-0"
+                  >
+                    {user.accounts.map((acc) => (
+                      <option
+                        key={acc.id}
+                        value={acc.id}
+                        className="text-base font-normal font-sans text-slate-900 bg-white dark:bg-slate-800 dark:text-white"
+                      >
+                        ${acc.availableBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="text-2xl sm:text-3xl font-extrabold font-mono text-[#1C2B4C] dark:text-white">
+                  ${sourceAccount.availableBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+              )}
             </div>
 
-            {/* ==================================================== */}
-            {/* OTHER BANK / INTERBANK TRANSFER FORM                 */}
-            {/* Field Order: 1. Account Number, 2. Recipient Name, 3. Bank Name */}
+            {/* OTHER BANK / INTERBANK TRANSFER FORM */}
             {transferType === 'external' && (
               <form onSubmit={handleReview} className="space-y-5">
-                {/* 1. Recipient Account Number */}
+                {/* Account Number */}
                 <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
-                      1. Recipient Account Number <span className="text-red-500">*</span>
-                    </label>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                      Authoritative Directory Lookup
-                    </span>
-                  </div>
-
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
+                    Account Number
+                  </label>
                   <div className="relative">
                     <input
                       type="text"
                       required
-                      inputMode="numeric"
-                      placeholder="Enter recipient account number (e.g. 9843210091, 3820194021)"
+                      inputMode="text"
+                      placeholder="Enter account number"
                       value={accountNumber}
                       onChange={(e) => handleAccountNumberChange(e.target.value)}
-                      className={`w-full px-4 py-3 bg-slate-50 dark:bg-[#10192A] border border-slate-300 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-mono font-medium text-slate-900 dark:text-white focus:bg-white dark:focus:bg-[#152033] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] ${
-                        isVerifying ? 'pr-10' : ''
-                      }`}
+                      onPaste={handlePasteAccountNumber}
+                      className={`w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] rounded-xl text-xs sm:text-sm font-mono font-medium text-slate-900 dark:text-white focus:bg-white dark:focus:bg-[#152033] focus:outline-none transition-colors ${
+                        verifiedRecipient && isRecipientConfirmed
+                          ? 'border-2 border-emerald-500 focus:ring-1 focus:ring-emerald-500'
+                          : verificationError
+                          ? 'border-2 border-red-500 focus:ring-1 focus:ring-red-500'
+                          : 'border border-slate-300 dark:border-slate-700 focus:ring-2 focus:ring-[#1C2B4C]'
+                      } ${isVerifying ? 'pr-10' : ''}`}
                     />
                     {isVerifying && (
-                      <div className="absolute right-3.5 top-3.5 flex items-center pointer-events-none">
+                      <div className="absolute right-3.5 top-3 flex items-center pointer-events-none">
                         <Loader2 className="w-4 h-4 text-[#1C2B4C] dark:text-slate-300 animate-spin" />
                       </div>
                     )}
                   </div>
-
-                  {/* Loading State */}
-                  {isVerifying && (
-                    <div className="mt-2 flex items-center space-x-2 text-xs text-slate-500 dark:text-slate-400 animate-fadeIn">
-                      <Loader2 className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400 animate-spin shrink-0" />
-                      <span>Resolving recipient &amp; receiving institution through authoritative directory...</span>
-                    </div>
-                  )}
-
-                  {/* Error State */}
-                  {verificationError && !isVerifying && (
-                    <div className="mt-2.5 p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-red-700 dark:text-red-300 text-xs flex items-center space-x-2 animate-fadeIn">
-                      <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
-                      <span>{verificationError}</span>
-                    </div>
-                  )}
                 </div>
 
-                {/* 2. Recipient Name */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
-                      2. Recipient Name <span className="text-red-500">*</span>
-                    </label>
-                    {isRecipientConfirmed && (
-                      <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center space-x-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Verified Account Holder</span>
-                      </span>
-                    )}
-                  </div>
-
-                  {/* State A: Recipient selected and confirmed */}
-                  {isRecipientConfirmed && verifiedRecipient ? (
-                    <div className="p-3.5 rounded-xl bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 flex items-center justify-between animate-fadeIn">
-                      <div className="flex items-center space-x-2.5 min-w-0">
-                        <div className="w-7 h-7 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs shrink-0">
-                          <Check className="w-4 h-4 stroke-[3]" />
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white truncate">
-                            {verifiedRecipient.recipientName}
-                          </div>
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                            {verifiedRecipient.accountType || 'Verified Account'} • Verified via {verificationSource}
-                          </div>
-                        </div>
+                {/* Verified Recipient Summary (Compact Presentation - Section 2) */}
+                {verifiedRecipient && isRecipientConfirmed && (
+                  <div className="p-3.5 sm:p-4 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl flex items-start justify-between gap-3 animate-fadeIn">
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          <span>Verified Account Holder</span>
+                        </span>
+                        {isPreviouslyUsedRecipient && (
+                          <span className="inline-flex items-center space-x-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300">
+                            <Users className="w-3 h-3 text-blue-600 dark:text-blue-400 shrink-0" />
+                            <span>
+                              Previously Used Recipient
+                              {lastTransferDate ? ` (${new Date(lastTransferDate).toLocaleDateString()})` : ''}
+                            </span>
+                          </span>
+                        )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleClearRecipient}
-                        className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white underline cursor-pointer shrink-0 ml-2"
-                      >
-                        Change
-                      </button>
+                      <div className="text-sm font-extrabold text-[#1C2B4C] dark:text-white truncate">
+                        {verifiedRecipient.recipientName}
+                      </div>
+                      <div className="text-xs text-slate-600 dark:text-slate-400 flex items-center space-x-1.5 truncate">
+                        <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <span className="truncate font-medium">{verifiedRecipient.bankName}</span>
+                      </div>
                     </div>
-                  ) : discoveredRecipient ? (
-                    /* State B: Verified recipient match discovered, clickable to select & populate bank */
-                    <div className="space-y-2 animate-fadeIn">
-                      <div
-                        onClick={() => handleSelectDiscoveredRecipient(discoveredRecipient)}
-                        className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-500 hover:border-emerald-600 dark:border-emerald-500 cursor-pointer transition-all shadow-xs flex items-center justify-between group"
-                      >
-                        <div className="flex items-center space-x-3 min-w-0">
-                          <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-                            <Check className="w-4 h-4 stroke-[3]" />
-                          </div>
-                          <div className="min-w-0">
-                            <div className="flex items-center space-x-2">
-                              <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white truncate">
-                                {discoveredRecipient.recipientName}
-                              </span>
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase bg-emerald-200 dark:bg-emerald-900/80 text-emerald-800 dark:text-emerald-200 shrink-0">
-                                Verified Match
-                              </span>
-                            </div>
-                            <div className="text-[11px] text-slate-600 dark:text-slate-400 truncate">
-                              Bank: {discoveredRecipient.bankName} • Account: {discoveredRecipient.accountNumber}
-                            </div>
-                          </div>
-                        </div>
+                    <button
+                      type="button"
+                      onClick={handleClearRecipient}
+                      className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 cursor-pointer shrink-0"
+                      title="Clear and change recipient"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
 
+                {/* Error Notice */}
+                {verificationError && !verifiedRecipient && (
+                  <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-red-800 dark:text-red-300 text-xs flex items-center space-x-2 animate-fadeIn">
+                    <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+                    <span>{verificationError}</span>
+                  </div>
+                )}
+
+                {/* Ambiguous Bank Selection (Section 2, Req 3) */}
+                {requiresBankSelection && ambiguousBanks.length > 0 && (
+                  <div className="p-3.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-2xl space-y-2 animate-fadeIn">
+                    <div className="flex items-center space-x-2 text-xs font-bold text-amber-900 dark:text-amber-300">
+                      <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>Select Receiving Institution for this Account</span>
+                    </div>
+                    <p className="text-[11px] text-amber-800/80 dark:text-amber-400">
+                      This account number format is recognized across multiple institutions. Choose the intended destination:
+                    </p>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {ambiguousBanks.map((bName) => (
                         <button
+                          key={bName}
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSelectDiscoveredRecipient(discoveredRecipient);
+                          onClick={() => {
+                            const found = supportedBanks.find((b) => b.name === bName || b.shortName === bName);
+                            if (found) {
+                              handleSelectBank(found);
+                            } else {
+                              triggerRecipientVerification(accountNumber, bName);
+                            }
                           }}
-                          className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-xs cursor-pointer transition-colors shrink-0 ml-2 group-hover:scale-105 active:scale-95 flex items-center space-x-1"
+                          className="px-3 py-1.5 bg-white dark:bg-[#10192A] border border-amber-300 dark:border-amber-700 hover:border-[#1C2B4C] dark:hover:border-slate-400 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer transition-colors"
                         >
-                          <span>Select Recipient</span>
-                          <ArrowRight className="w-3.5 h-3.5" />
+                          {bName}
                         </button>
-                      </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        Click <span className="font-semibold text-emerald-700 dark:text-emerald-400">Select Recipient</span> to confirm destination and auto-fill the verified bank name.
-                      </p>
+                      ))}
                     </div>
-                  ) : (
-                    /* State C: Empty initial state */
-                    <div>
-                      <input
-                        type="text"
-                        readOnly
-                        disabled
-                        placeholder="Automatically retrieved once account number is entered"
-                        value=""
-                        className="w-full px-4 py-2.5 bg-slate-100 dark:bg-[#10192A]/50 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm text-slate-400 dark:text-slate-500 cursor-not-allowed"
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* 3. Bank Name (Restored Complete Bank Selection List) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
-                      3. Bank Name <span className="text-red-500">*</span>
-                    </label>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                      {wasBankAutoSelected ? 'Auto-Selected from Verified Recipient' : 'All Supported Financial Institutions'}
-                    </span>
                   </div>
+                )}
 
+                {/* Bank Name */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
+                    Bank Name
+                  </label>
                   <div className="relative" ref={bankDropdownRef}>
                     <button
                       type="button"
@@ -1046,11 +1423,6 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                         <span className="text-xs sm:text-sm truncate">
                           {selectedBank ? selectedBank.name : 'Select Bank'}
                         </span>
-                        {wasBankAutoSelected && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 shrink-0">
-                            Auto-Selected
-                          </span>
-                        )}
                       </div>
                       <span className="text-xs text-slate-400 font-semibold ml-2">▾</span>
                     </button>
@@ -1102,51 +1474,96 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                   </div>
                 </div>
 
-                {/* 4 & 5. Routing Number & SWIFT/BIC Code (Authoritative & Verified) */}
+                {/* Routing Number & SWIFT Code (Sections 3, 4, 6) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
-                      Routing Transit Number (ABA)
-                    </label>
-                    <input
-                      type="text"
-                      readOnly
-                      placeholder="e.g. 111000614"
-                      value={routingNumber}
-                      className="w-full px-4 py-2.5 bg-slate-100 dark:bg-[#10192A]/60 border border-slate-300 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-mono font-semibold text-slate-800 dark:text-slate-200"
-                    />
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
+                        Routing Number (ABA)
+                      </label>
+                      {routingValid && (
+                        <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center space-x-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>Verified</span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        required
+                        placeholder={isPreviouslyUsedRecipient ? 'Routing number' : 'Enter 9-digit routing number'}
+                        value={routingNumber}
+                        onChange={(e) => handleRoutingChange(e.target.value)}
+                        className={`w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] rounded-xl text-xs sm:text-sm font-mono font-semibold text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-[#152033] focus:outline-none transition-colors ${
+                          routingValid
+                            ? 'border-2 border-emerald-500 focus:ring-1 focus:ring-emerald-500'
+                            : routingError
+                            ? 'border-2 border-red-500 focus:ring-1 focus:ring-red-500'
+                            : 'border border-slate-300 dark:border-slate-700 focus:ring-2 focus:ring-[#1C2B4C]'
+                        }`}
+                      />
+                      {routingValid && (
+                        <div className="absolute right-3.5 top-3 flex items-center pointer-events-none text-emerald-500">
+                          <Check className="w-4 h-4 stroke-[3]" />
+                        </div>
+                      )}
+                    </div>
+                    {routingError && (
+                      <p className="mt-1 text-[11px] text-red-600 dark:text-red-400 font-medium">{routingError}</p>
+                    )}
                   </div>
+
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
-                      SWIFT / BIC Wire Code
-                    </label>
-                    <input
-                      type="text"
-                      readOnly
-                      placeholder="e.g. CHASUS33"
-                      value={swiftCode}
-                      className="w-full px-4 py-2.5 bg-slate-100 dark:bg-[#10192A]/60 border border-slate-300 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-mono font-semibold text-slate-800 dark:text-slate-200"
-                    />
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
+                        SWIFT / BIC Code
+                      </label>
+                      {swiftValid && (
+                        <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center space-x-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          <span>Verified</span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        required
+                        placeholder={isPreviouslyUsedRecipient ? 'SWIFT code' : 'Enter 8 or 11-char SWIFT code'}
+                        value={swiftCode}
+                        onChange={(e) => handleSwiftChange(e.target.value)}
+                        className={`w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] rounded-xl text-xs sm:text-sm font-mono font-semibold text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-[#152033] focus:outline-none transition-colors ${
+                          swiftValid
+                            ? 'border-2 border-emerald-500 focus:ring-1 focus:ring-emerald-500'
+                            : swiftError
+                            ? 'border-2 border-red-500 focus:ring-1 focus:ring-red-500'
+                            : 'border border-slate-300 dark:border-slate-700 focus:ring-2 focus:ring-[#1C2B4C]'
+                        }`}
+                      />
+                      {swiftValid && (
+                        <div className="absolute right-3.5 top-3 flex items-center pointer-events-none text-emerald-500">
+                          <Check className="w-4 h-4 stroke-[3]" />
+                        </div>
+                      )}
+                    </div>
+                    {swiftError && (
+                      <p className="mt-1 text-[11px] text-red-600 dark:text-red-400 font-medium">{swiftError}</p>
+                    )}
                   </div>
                 </div>
 
-                {/* 6. Transfer Amount */}
+                {/* Transfer Amount */}
                 <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
-                      Transfer Amount ($ USD) <span className="text-red-500">*</span>
-                    </label>
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
-                      Available: ${sourceAccount.availableBalance.toFixed(2)}
-                    </span>
-                  </div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
+                    Transfer Amount
+                  </label>
                   <div className="relative">
                     <span className="absolute left-4 top-2.5 text-lg font-bold text-slate-400">$</span>
                     <input
                       type="number"
                       step="0.01"
                       min="0.01"
-                      max="25000"
                       required
                       placeholder="0.00"
                       value={amount}
@@ -1156,7 +1573,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                   </div>
                 </div>
 
-                {/* 7. Payment Reference */}
+                {/* Payment Reference */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
                     Payment Reference <span className="text-slate-400 font-normal lowercase">(optional)</span>
@@ -1164,14 +1581,14 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                   <input
                     type="text"
                     maxLength={100}
-                    placeholder="e.g. Invoice #4081, Real Estate Escrow"
+                    placeholder="e.g. Real Estate Escrow, Consulting Retainer, Invoice #4081"
                     value={paymentReference}
                     onChange={(e) => setPaymentReference(e.target.value)}
                     className="w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] border border-slate-300 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-medium text-slate-900 dark:text-white focus:bg-white dark:focus:bg-[#152033] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C]"
                   />
                 </div>
 
-                {/* 8. Save Beneficiary Option */}
+                {/* Save Beneficiary Option */}
                 <div className="pt-1 bg-slate-50 dark:bg-[#10192A] p-3 rounded-xl border border-slate-200/60 dark:border-slate-800">
                   <label className="flex items-center space-x-2.5 text-xs text-slate-700 dark:text-slate-300 font-semibold cursor-pointer">
                     <input
@@ -1180,12 +1597,12 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                       onChange={(e) => setSaveBeneficiary(e.target.checked)}
                       className="rounded border-slate-300 dark:border-slate-700 text-[#C8102E] focus:ring-[#C8102E]"
                     />
-                    <span>Save verified recipient to my trusted address book for future 1-click transfers</span>
+                    <span>Save verified recipient to my address book for future transfers</span>
                   </label>
                   {saveBeneficiary && (
                     <input
                       type="text"
-                      placeholder="Custom Nickname (e.g. Utility Account, Supplier)"
+                      placeholder="Custom Nickname (e.g. Real Estate Escrow, Corporate Supplier)"
                       value={beneficiaryNickname}
                       onChange={(e) => setBeneficiaryNickname(e.target.value)}
                       className="mt-2 w-full px-3 py-1.5 bg-white dark:bg-[#152033] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white rounded-lg text-xs"
@@ -1193,27 +1610,16 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                   )}
                 </div>
 
-                {/* 9. Review & Submit Button */}
+                {/* Primary CTA Button: Review Transfer */}
                 <div className="pt-2">
                   <button
                     type="submit"
-                    disabled={!verifiedRecipient || !isRecipientConfirmed || !selectedBank}
+                    disabled={!verifiedRecipient || !isRecipientConfirmed || !selectedBank || !routingValid || !swiftValid}
                     className="w-full py-3.5 bg-[#C8102E] hover:bg-[#A00B22] text-white font-bold text-xs sm:text-sm rounded-full shadow-md transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
                   >
-                    <span>Review Transfer Authorization</span>
+                    <span>Review Transfer</span>
                     <ArrowRight className="w-4 h-4" />
                   </button>
-                  {(!verifiedRecipient || !isRecipientConfirmed || !selectedBank) && (
-                    <p className="text-center text-[11px] text-slate-500 dark:text-slate-400 mt-2 font-medium">
-                      {!accountNumber
-                        ? 'Enter a recipient account number above to retrieve verified recipient details.'
-                        : !isRecipientConfirmed
-                        ? 'Click "Select Recipient" on the verified match to confirm the recipient and auto-fill the bank.'
-                        : !selectedBank
-                        ? 'Please select the destination bank.'
-                        : ''}
-                    </p>
-                  )}
                 </div>
               </form>
             )}
@@ -1262,7 +1668,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
-                    Memo / Note (Optional)
+                    Payment Reference (Optional)
                   </label>
                   <input
                     type="text"
@@ -1276,9 +1682,10 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                 <div className="pt-2">
                   <button
                     type="submit"
-                    className="w-full py-3.5 bg-[#C8102E] hover:bg-[#A00B22] text-white font-bold text-xs sm:text-sm rounded-full shadow-md transition-colors cursor-pointer"
+                    className="w-full py-3.5 bg-[#C8102E] hover:bg-[#A00B22] text-white font-bold text-xs sm:text-sm rounded-full shadow-md transition-colors cursor-pointer flex items-center justify-center space-x-2"
                   >
-                    Review Internal Transfer &gt;
+                    <span>Review Transfer</span>
+                    <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>
               </form>
@@ -1367,67 +1774,18 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                 <div className="pt-2">
                   <button
                     type="submit"
-                    className="w-full py-3.5 bg-[#C8102E] hover:bg-[#A00B22] text-white font-bold text-xs sm:text-sm rounded-full shadow-md transition-colors cursor-pointer"
+                    className="w-full py-3.5 bg-[#C8102E] hover:bg-[#A00B22] text-white font-bold text-xs sm:text-sm rounded-full shadow-md transition-colors cursor-pointer flex items-center justify-center space-x-2"
                   >
-                    Review Client Transfer &gt;
+                    <span>Review Transfer</span>
+                    <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>
               </form>
             )}
           </div>
 
-          {/* Right Col: Verified Beneficiary (when verified & selected) and Saved Beneficiaries */}
+          {/* Right Col: Saved Beneficiaries */}
           <div className="space-y-6">
-            {/* Verified Beneficiary Card - ONLY displayed when recipient has actually been verified and selected */}
-            {verifiedRecipient && isRecipientConfirmed && (
-              <div className="bg-white dark:bg-[#152033] rounded-3xl p-6 border border-emerald-200/90 dark:border-emerald-800/80 shadow-xs space-y-4 animate-fadeIn">
-                <div className="flex items-center space-x-2 text-emerald-700 dark:text-emerald-400">
-                  <CheckCircle2 className="w-5 h-5" />
-                  <h3 className="text-sm font-bold text-[#1C2B4C] dark:text-white">Verified Beneficiary</h3>
-                </div>
-
-                <div className="space-y-2.5 text-xs">
-                  <div className="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800">
-                    <span className="text-slate-500 dark:text-slate-400">Recipient Name</span>
-                    <span className="font-bold text-[#1C2B4C] dark:text-white text-right">{verifiedRecipient.recipientName}</span>
-                  </div>
-
-                  <div className="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800">
-                    <span className="text-slate-500 dark:text-slate-400">Bank</span>
-                    <span className="font-semibold text-slate-800 dark:text-slate-200 text-right">
-                      {selectedBank?.shortName || verifiedRecipient.bankName}
-                    </span>
-                  </div>
-
-                  <div className="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800">
-                    <span className="text-slate-500 dark:text-slate-400">Account Number</span>
-                    <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{maskAccount(accountNumber)}</span>
-                  </div>
-
-                  <div className="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800">
-                    <span className="text-slate-500 dark:text-slate-400">Routing Number</span>
-                    <span className="font-mono text-slate-800 dark:text-slate-200">{routingNumber}</span>
-                  </div>
-
-                  <div className="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800">
-                    <span className="text-slate-500 dark:text-slate-400">SWIFT/BIC Code</span>
-                    <span className="font-mono text-slate-800 dark:text-slate-200">{swiftCode}</span>
-                  </div>
-
-                  {verifiedRecipient.accountType && (
-                    <div className="flex justify-between py-1.5 border-b border-slate-100 dark:border-slate-800">
-                      <span className="text-slate-500 dark:text-slate-400">Account Type</span>
-                      <span className="text-slate-700 dark:text-slate-300 font-medium">{verifiedRecipient.accountType}</span>
-                    </div>
-                  )}
-
-                  <div className="pt-2 flex items-center space-x-1.5 text-[11px] text-emerald-700 dark:text-emerald-400 font-medium">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                    <span>Verified interbank recipient record</span>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Saved Beneficiaries Card */}
             <div className="bg-white dark:bg-[#152033] rounded-3xl p-6 border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
@@ -1438,7 +1796,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
 
               {user.beneficiaries.length === 0 ? (
                 <div className="text-center py-6 text-slate-400 dark:text-slate-500 text-xs">
-                  No saved recipients yet. When you transfer funds, you can check "Save as trusted beneficiary".
+                  No saved recipients yet. When you transfer funds, check "Save verified recipient" to save for future transfers.
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -1453,7 +1811,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                           {b.name}
                         </div>
                         <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                          {b.bankName} • {b.accountNumber}
+                          {b.bankName} • {maskAccountNumber(b.accountNumber)}
                         </div>
                       </div>
                       <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-slate-800 dark:group-hover:text-white transition-colors" />
@@ -1461,6 +1819,174 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* 6. TRANSACTION PIN MODAL                             */}
+      {/* Exact Heading: "Input Transaction PIN"               */}
+      {/* Triggered only when clicking Confirm and Execute      */}
+      {/* ==================================================== */}
+      {/* ==================================================== */}
+      {/* 6. REDESIGNED COMPACT TRANSACTION PIN POPUP          */}
+      {/* Essential info only: Amount, Recipient, PIN inputs   */}
+      {/* Discreet top close icon; No bottom action buttons    */}
+      {/* Automatic execution upon entering 4th digit          */}
+      {/* ==================================================== */}
+      {isPinModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs animate-fadeIn"
+        >
+          <div className="bg-white dark:bg-[#152033] rounded-3xl max-w-sm w-full overflow-hidden shadow-2xl border border-slate-200/80 dark:border-slate-800 flex flex-col p-6 relative animate-scaleUp">
+            {/* Discreet top close icon */}
+            <button
+              type="button"
+              onClick={() => {
+                if (!loading && !isSubmittingRef.current) {
+                  setIsPinModalOpen(false);
+                  setPinDigits(['', '', '', '']);
+                  setPinError('');
+                }
+              }}
+              disabled={loading}
+              className="absolute top-4 right-4 w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-40"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {!user.hasPaymentPin ? (
+              /* User does not have a PIN setup yet */
+              <div className="space-y-4 text-center py-4">
+                <div className="w-12 h-12 bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 rounded-2xl flex items-center justify-center mx-auto">
+                  <ShieldAlert className="w-6 h-6 text-amber-600 dark:text-amber-400" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-[#1C2B4C] dark:text-white">
+                    Transaction PIN Required
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs mx-auto">
+                    Please set up your verified 4-digit PIN to authorize transfers.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsPinModalOpen(false);
+                    setIsPinSetupModalOpen(true);
+                  }}
+                  className="w-full py-3 px-5 bg-[#C8102E] hover:bg-[#A00B22] text-white font-bold text-xs rounded-full shadow-md transition-colors cursor-pointer"
+                >
+                  Set Up Transaction PIN
+                </button>
+              </div>
+            ) : (
+              <div className="pt-2 space-y-5">
+                {/* 1. Transfer Amount & 2. Recipient Name */}
+                <div className="text-center space-y-1">
+                  <div className="text-2xl sm:text-3xl font-extrabold font-mono tracking-tight text-[#1C2B4C] dark:text-white">
+                    ${parseFloat(amount || '0').toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{' '}
+                    <span className="text-xs font-sans font-bold text-slate-400">USD</span>
+                  </div>
+                  <div className="text-xs text-slate-600 dark:text-slate-300 font-semibold truncate max-w-xs mx-auto">
+                    {verifiedRecipient?.recipientName === 'Verified Account Holder'
+                      ? 'Enter Payment Pin'
+                      : (verifiedRecipient?.recipientName ||
+                        (transferType === 'internal'
+                          ? `${user.firstName} ${user.lastName}`
+                          : p2pRecipientName || 'Aurelith Client'))}
+                  </div>
+                </div>
+
+                {/* 3. PIN Input Field */}
+                <div className="space-y-3">
+                  <div className="flex justify-center space-x-3">
+                    {pinDigits.map((digit, idx) => (
+                      <input
+                        key={idx}
+                        ref={(el) => {
+                          pinInputRefs.current[idx] = el;
+                        }}
+                        type="password"
+                        inputMode="numeric"
+                        maxLength={1}
+                        pattern="[0-9]*"
+                        disabled={loading || isSubmittingRef.current || Boolean(lockoutUntil)}
+                        value={digit}
+                        onChange={(e) => handlePinDigitChange(idx, e.target.value)}
+                        onKeyDown={(e) => handlePinKeyDown(idx, e)}
+                        className="w-12 h-14 bg-slate-50 dark:bg-[#0B111E] border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-slate-100 rounded-2xl text-center text-2xl font-mono font-bold focus:bg-white dark:focus:bg-[#10192A] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] dark:focus:ring-slate-500 transition-all shadow-xs disabled:opacity-50"
+                      />
+                    ))}
+                  </div>
+
+                  {/* Loading spinner while verifying & executing */}
+                  {loading && (
+                    <div className="flex items-center justify-center space-x-2 text-xs text-slate-500 dark:text-slate-400 animate-fadeIn pt-1">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#1C2B4C] dark:text-slate-300" />
+                      <span>Authorizing transfer...</span>
+                    </div>
+                  )}
+
+                  {/* Subtle error feedback */}
+                  {pinError && !loading && (
+                    <div className="text-center text-xs text-red-600 dark:text-red-400 font-medium animate-fadeIn">
+                      {pinError}
+                    </div>
+                  )}
+
+                  {lockoutUntil && (
+                    <div className="text-center text-xs text-amber-600 dark:text-amber-400 font-medium">
+                      Security lockout active: {lockoutRemainingSecs}s
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Setup PIN Modal if user needs to establish their PIN first */}
+      <TransactionPinSetupModal
+        isOpen={isPinSetupModalOpen}
+        onClose={() => setIsPinSetupModalOpen(false)}
+        onSuccess={() => {
+          setIsPinSetupModalOpen(false);
+          // Return to review state ready for PIN confirmation
+          handleProceedToPinAuthorization();
+        }}
+      />
+
+      {/* Restricted Transfer Warning Popup (PART 7) */}
+      {showRestrictedIpPopup && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-[#101726] border border-red-500/40 rounded-2xl p-6 shadow-2xl text-center space-y-4 animate-scaleUp">
+            <div className="w-12 h-12 mx-auto rounded-full bg-red-950/70 border border-red-500/50 flex items-center justify-center">
+              <ShieldAlert className="w-6 h-6 text-red-500" />
+            </div>
+            <p className="text-sm font-semibold text-red-400 leading-relaxed px-2">
+              New IP detected. Unusual activity. Wait 24 to 48 hours and try again.
+            </p>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRestrictedIpPopup(false);
+                  setIsReviewing(false);
+                  setIsPinModalOpen(false);
+                  if (onSuccessReturn) {
+                    onSuccessReturn();
+                  }
+                }}
+                className="w-full py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition-colors cursor-pointer"
+              >
+                Dismiss
+              </button>
             </div>
           </div>
         </div>

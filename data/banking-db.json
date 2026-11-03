@@ -31,8 +31,8 @@
           "type": "checking",
           "name": "Aurelith Premier Checking",
           "currency": "USD",
-          "balance": 14850.75,
-          "availableBalance": 14850.75,
+          "balance": 16875.25,
+          "availableBalance": 16875.25,
           "status": "active",
           "createdAt": "2026-08-25T00:10:26.303Z",
           "institution": "Aurelith Reserve"
@@ -140,6 +140,30 @@
         }
       ],
       "notifications": [
+        {
+          "id": "notif_049d6a8fa488",
+          "title": "Administrative Account Adjustment",
+          "message": "An authorized credit adjustment of $500.00 was posted to your Aurelith Premier Checking. Reference: CIPHER-TEST-ADJ-002.",
+          "type": "transaction",
+          "read": false,
+          "createdAt": "2026-11-02T12:16:32.994Z"
+        },
+        {
+          "id": "notif_13705b4b3d97",
+          "title": "Administrative Account Adjustment",
+          "message": "An authorized credit adjustment of $1500.00 was posted to your Aurelith Premier Checking. Reference: CIPHER-TEST-ADJ-001.",
+          "type": "transaction",
+          "read": false,
+          "createdAt": "2026-11-02T12:16:08.175Z"
+        },
+        {
+          "id": "notif_d5148d4ae653",
+          "title": "Administrative Account Adjustment",
+          "message": "An authorized credit adjustment of $50.00 was posted to your Aurelith Premier Checking. Reference: CIPHER-ADJ-20261101-4CA015.",
+          "type": "transaction",
+          "read": false,
+          "createdAt": "2026-11-01T10:28:42.729Z"
+        },
         {
           "id": "notif_b1099cd8e3bc",
           "title": "New Device Verified & Trusted",
@@ -399,7 +423,9 @@
       ],
       "paymentPinHash": "ba7f617c69f7877f13b8592572ccdedd3d42d5297c96880b90c77a6f80f9419ea2b97c40c6c3e716358175a34b9d18533fb76ed4d6a8bf2e1761f3d0708a6869",
       "paymentPinSalt": "d4e737e31d655fc83b3afb5b9d321f32",
-      "clientId": "AR-882190"
+      "clientId": "AR-882190",
+      "transferAccess": "enabled",
+      "flaggedForReview": false
     },
     {
       "id": "usr_31045fa0158d",
@@ -479,6 +505,54 @@
       "loans": [],
       "notifications": [
         {
+          "id": "notif_a0d2cd7defad",
+          "title": "Unsuccessful Device Verification",
+          "message": "An incorrect payment PIN was entered during verification for device \"Web Browser\".",
+          "type": "security",
+          "read": false,
+          "createdAt": "2026-11-03T10:13:16.167Z"
+        },
+        {
+          "id": "notif_e9f101e92f4e",
+          "title": "Unsuccessful Device Verification",
+          "message": "An incorrect payment PIN was entered during verification for device \"Web Browser\".",
+          "type": "security",
+          "read": false,
+          "createdAt": "2026-11-03T10:13:16.102Z"
+        },
+        {
+          "id": "notif_e3f86c44e0f3",
+          "title": "Unsuccessful Device Verification",
+          "message": "An incorrect payment PIN was entered during verification for device \"Web Browser\".",
+          "type": "security",
+          "read": false,
+          "createdAt": "2026-11-03T10:13:16.037Z"
+        },
+        {
+          "id": "notif_f24ca1795b71",
+          "title": "Unsuccessful Device Verification",
+          "message": "An incorrect payment PIN was entered during verification for device \"Web Browser\".",
+          "type": "security",
+          "read": false,
+          "createdAt": "2026-11-03T10:13:15.968Z"
+        },
+        {
+          "id": "notif_bffbec41a1a4",
+          "title": "One-Time Device Verification Code",
+          "message": "Your Aurelith Reserve device authorization code is: 915815. This code expires in 10 minutes. Never share this code with anyone.",
+          "type": "security",
+          "read": false,
+          "createdAt": "2026-11-03T10:13:04.061Z"
+        },
+        {
+          "id": "notif_b8eb0adf3c96",
+          "title": "Unsuccessful Device Verification",
+          "message": "An incorrect payment PIN was entered during verification for device \"Web Browser\".",
+          "type": "security",
+          "read": false,
+          "createdAt": "2026-11-03T10:12:59.862Z"
+        },
+        {
           "id": "notif_ac0b08bf936f",
           "title": "Payment PIN Configured & Device Trusted",
           "message": "Your payment PIN was established and device \"Web Browser\" is now trusted.",
@@ -505,11 +579,12 @@
           "deviceName": "Web Browser",
           "ipAddress": "127.0.0.1",
           "trustedAt": "2026-10-24T11:52:13.152Z",
-          "lastUsedAt": "2026-10-24T11:52:13.152Z",
+          "lastUsedAt": "2026-11-03T10:14:19.450Z",
           "status": "trusted"
         }
       ],
-      "clientId": "AR-F04983"
+      "clientId": "AR-F04983",
+      "transferAccess": "enabled"
     },
     {
       "id": "usr_ar_6f7079",
@@ -583,7 +658,8 @@
       "actualClientId": "AR-70363A",
       "role": "customer",
       "passwordHash": "7af630e0d836c90bbee4c4bdc7b4bd5b4604d2f693d0bed67b013f53a45e3261f72f9038f94d37e8647a5c10550bdb8a7bc1622f4af527feb65559394de86528",
-      "salt": "4b8f90101f104e4cebe61b22abe69566"
+      "salt": "4b8f90101f104e4cebe61b22abe69566",
+      "transferAccess": "enabled"
     },
     {
       "id": "usr_ar_60fce0",
@@ -654,12 +730,151 @@
           "createdAt": "2026-10-28T16:00:00.000Z"
         }
       ],
-      "role": "customer",
+      "role": "cipher",
       "passwordHash": "7af630e0d836c90bbee4c4bdc7b4bd5b4604d2f693d0bed67b013f53a45e3261f72f9038f94d37e8647a5c10550bdb8a7bc1622f4af527feb65559394de86528",
-      "salt": "4b8f90101f104e4cebe61b22abe69566"
+      "salt": "4b8f90101f104e4cebe61b22abe69566",
+      "transferAccess": "enabled"
+    },
+    {
+      "id": "usr_cipher_cga",
+      "clientId": "AR-CIPHER",
+      "firstName": "Cipher",
+      "lastName": "Administrative",
+      "email": "contact.cga.usa@gmail.com",
+      "phoneNumber": "+12145550100",
+      "dateOfBirth": "1985-01-01",
+      "gender": "Male",
+      "idType": "Official Identification",
+      "idNumber": "CIPHER-001",
+      "governmentId": "CIPHER-001",
+      "residentialAddress": {
+        "street": "500 Crescent Court, Suite 400",
+        "city": "Dallas",
+        "state": "TX",
+        "zipCode": "75201",
+        "country": "United States"
+      },
+      "status": "active",
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "hasPaymentPin": true,
+      "role": "cipher",
+      "transferAccess": "enabled",
+      "passwordHash": "7af630e0d836c90bbee4c4bdc7b4bd5b4604d2f693d0bed67b013f53a45e3261f72f9038f94d37e8647a5c10550bdb8a7bc1622f4af527feb65559394de86528",
+      "salt": "4b8f90101f104e4cebe61b22abe69566",
+      "accounts": [
+        {
+          "id": "acc_cipher_cga_01",
+          "accountNumber": "1100999901",
+          "routingNumber": "111301122",
+          "swiftCode": "AURUS33D",
+          "type": "checking",
+          "name": "Cipher Treasury Custody",
+          "nickname": "Cipher Primary Custody Vault",
+          "institution": "Aurelith Reserve",
+          "currency": "USD",
+          "balance": 5000000,
+          "availableBalance": 5000000,
+          "status": "active",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      ],
+      "cards": [],
+      "beneficiaries": [],
+      "savingsGoals": [],
+      "loans": [],
+      "notifications": [
+        {
+          "id": "notif_cipher_01",
+          "title": "Cipher Security Architecture Active",
+          "message": "Authorized Cipher operator access verified and operational.",
+          "type": "security",
+          "read": true,
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      ]
     }
   ],
   "transactions": [
+    {
+      "id": "tx_adj_0062fbe184d2",
+      "reference": "CIPHER-TEST-ADJ-002",
+      "userId": "usr_alex_morgan",
+      "accountId": "acc_chk_01",
+      "type": "balance_adjustment",
+      "category": "Administrative Adjustment",
+      "amount": 500,
+      "direction": "credit",
+      "description": "Cipher Administrative CREDIT Adjustment: Verified audit adjustment for test demonstration",
+      "senderName": "Aurelith Reserve Cipher Operations",
+      "recipientName": "Alex Morgan",
+      "status": "completed",
+      "fee": 0,
+      "timestamp": "2026-11-02T12:16:32.994Z",
+      "balanceAfter": 16900.75
+    },
+    {
+      "id": "tx_adj_9c9680525ea5",
+      "reference": "CIPHER-TEST-ADJ-001",
+      "userId": "usr_alex_morgan",
+      "accountId": "acc_chk_01",
+      "type": "balance_adjustment",
+      "category": "Audited Financial Transfer",
+      "amount": 1500,
+      "direction": "credit",
+      "description": "Amended Memo: Client Investment Inflow",
+      "senderName": "Aurelith Reserve Cipher Operations",
+      "recipientName": "Alex Morgan",
+      "status": "completed",
+      "fee": 0,
+      "timestamp": "2026-11-02T12:16:08.175Z",
+      "balanceAfter": 16400.75,
+      "correctionHistory": [
+        {
+          "amendedAt": "2026-11-02T12:16:33.002Z",
+          "amendedBy": "contact.cga.usa@gmail.com",
+          "reason": "Compliance correction of description and classification",
+          "previousValues": {
+            "description": "Cipher Administrative CREDIT Adjustment: Verified audit adjustment for test demonstration",
+            "category": "Administrative Adjustment",
+            "timestamp": "2026-11-02T12:16:08.175Z",
+            "amount": 1500,
+            "senderName": "Aurelith Reserve Cipher Operations",
+            "recipientName": "Alex Morgan",
+            "status": "completed"
+          },
+          "newValues": {
+            "description": "Amended Memo: Client Investment Inflow",
+            "category": "Audited Financial Transfer"
+          }
+        }
+      ],
+      "originalValues": {
+        "description": "Cipher Administrative CREDIT Adjustment: Verified audit adjustment for test demonstration",
+        "category": "Administrative Adjustment",
+        "timestamp": "2026-11-02T12:16:08.175Z",
+        "amount": 1500,
+        "senderName": "Aurelith Reserve Cipher Operations",
+        "recipientName": "Alex Morgan",
+        "status": "completed"
+      }
+    },
+    {
+      "id": "tx_adj_7478a2f9733b",
+      "reference": "CIPHER-ADJ-20261101-4CA015",
+      "userId": "usr_alex_morgan",
+      "accountId": "acc_chk_01",
+      "type": "balance_adjustment",
+      "category": "Administrative Adjustment",
+      "amount": 50,
+      "direction": "credit",
+      "description": "Cipher Administrative CREDIT Adjustment: Cipher authorized verification credit",
+      "senderName": "Aurelith Reserve Cipher Operations",
+      "recipientName": "Alex Morgan",
+      "status": "completed",
+      "fee": 0,
+      "timestamp": "2026-11-01T10:28:42.729Z",
+      "balanceAfter": 14900.75
+    },
     {
       "id": "tx_01",
       "reference": "AUR-20261022-7F2A",
@@ -682,7 +897,7 @@
       "accountId": "acc_chk_01",
       "type": "transfer",
       "category": "Transfer",
-      "amount": 500,
+      "amount": 525.5,
       "direction": "debit",
       "description": "Transfer to High-Yield Reserve Savings",
       "recipientName": "Alex Morgan",
@@ -691,7 +906,37 @@
       "status": "completed",
       "fee": 0,
       "timestamp": "2026-10-22T12:10:26.303Z",
-      "balanceAfter": 10000.75
+      "balanceAfter": 16875.25,
+      "correctionHistory": [
+        {
+          "amendedAt": "2026-11-02T12:16:41.748Z",
+          "amendedBy": "contact.cga.usa@gmail.com",
+          "reason": "Adjusted transaction amount following compliance reconciliation",
+          "previousValues": {
+            "description": "Transfer to High-Yield Reserve Savings",
+            "category": "Transfer",
+            "timestamp": "2026-10-22T12:10:26.303Z",
+            "amount": 500,
+            "recipientName": "Alex Morgan",
+            "recipientAccount": "1100892041",
+            "recipientBank": "Aurelith Reserve",
+            "status": "completed"
+          },
+          "newValues": {
+            "amount": 525.5
+          }
+        }
+      ],
+      "originalValues": {
+        "description": "Transfer to High-Yield Reserve Savings",
+        "category": "Transfer",
+        "timestamp": "2026-10-22T12:10:26.303Z",
+        "amount": 500,
+        "recipientName": "Alex Morgan",
+        "recipientAccount": "1100892041",
+        "recipientBank": "Aurelith Reserve",
+        "status": "completed"
+      }
     },
     {
       "id": "tx_03",
@@ -2770,6 +3015,101 @@
       "userId": "usr_071f8109b509",
       "expiresAt": 1793468325132,
       "status": "active"
+    },
+    "aur_sess_f357407012258e9d85c4bb15bf27385c1cc96188e7817a349544217524a83e8b": {
+      "userId": "usr_ar_60fce0",
+      "expiresAt": 1794133702006,
+      "status": "active"
+    },
+    "aur_sess_6be88a1db73d349b71a337ddf8751cd3348177c038251bd30326cd35a80565a1": {
+      "userId": "usr_ar_60fce0",
+      "expiresAt": 1794133705792,
+      "status": "active"
+    },
+    "aur_sess_99a52e06c5325ae663603f0c9122323db2f616558f778e19537e398dd549ad98": {
+      "userId": "usr_ar_60fce0",
+      "expiresAt": 1794133709757,
+      "status": "active"
+    },
+    "aur_sess_e37088e4945379b41fd36bdef3b43b35831eff28499942940ddee0b6c5cac669": {
+      "userId": "usr_alex_morgan",
+      "expiresAt": 1794133714019,
+      "status": "active"
+    },
+    "aur_sess_4a5867f10dde4f3f800b97b1b68df6e2e8c06fc69bbc3ba223ca7dc05e8a8038": {
+      "userId": "usr_ar_60fce0",
+      "expiresAt": 1794133718368,
+      "status": "active"
+    },
+    "aur_sess_b1e7ccbcc990855f5d013a11a952b2c1c4e7d2c5469a5d3140f9284663d598bf": {
+      "userId": "usr_ar_60fce0",
+      "expiresAt": 1794133722713,
+      "status": "active"
+    },
+    "aur_sess_04c27270c8ce214fb268163f5b67ab20921284f25ac1ceffe501f510edc3df11": {
+      "userId": "usr_ar_60fce0",
+      "expiresAt": 1794134507600,
+      "status": "active"
+    },
+    "aur_sess_c58b24d6efbb339f1409a46cee97ef1bff6d82fad407819763437da4941bc327": {
+      "userId": "usr_ar_60fce0",
+      "expiresAt": 1794134508247,
+      "status": "active"
+    },
+    "aur_sess_870071157d449ac0e0c2615cc6bd00575572ae56cedc1bbe0e7a64e2235c43a8": {
+      "userId": "usr_cipher_cga",
+      "expiresAt": 1794134706230,
+      "status": "active"
+    },
+    "aur_sess_7f6112cb4198875b5293404c9b3fcf0aeca457d5c89164e8bdbd203a446aa4e4": {
+      "userId": "usr_alex_morgan",
+      "expiresAt": 1794134710558,
+      "status": "active"
+    },
+    "aur_sess_a6a0a200ef1b7e45e99f8fdc64a09e62fdb4db5b5014b52de3e36cb95d0b8a55": {
+      "userId": "usr_cipher_cga",
+      "expiresAt": 1794226554797,
+      "status": "active"
+    },
+    "aur_sess_58dd479813512011774a7448a0dbec5a750fb8114e8249f4d2568866fe41ffaa": {
+      "userId": "usr_cipher_cga",
+      "expiresAt": 1794226568142,
+      "status": "active"
+    },
+    "aur_sess_061822fe89fe5bc447f9e07513d7db9047d163d2e1625f259aaf274306524706": {
+      "userId": "usr_cipher_cga",
+      "expiresAt": 1794226574641,
+      "status": "active"
+    },
+    "aur_sess_4c226fe7da4438d70bf49b0e6d216cb38b91cda8db688947e8979689839f5562": {
+      "userId": "usr_cipher_cga",
+      "expiresAt": 1794226592934,
+      "status": "active"
+    },
+    "aur_sess_6e59993af97a44ef26bb86d77e92f7104533ecd32ba62a40d89a567911133e5f": {
+      "userId": "usr_alex_morgan",
+      "expiresAt": 1794226593019,
+      "status": "active"
+    },
+    "aur_sess_a831cab8859bb562652b87b0ba7ec492c28560d563597760c269259770e5bfae": {
+      "userId": "usr_cipher_cga",
+      "expiresAt": 1794226601726,
+      "status": "active"
+    },
+    "aur_sess_8d68e143fd2cc5dcf02df78f159f0a44ba0e63c589158b0dda65dc3730a05f0f": {
+      "userId": "usr_cipher_cga",
+      "expiresAt": 1794226607868,
+      "status": "active"
+    },
+    "aur_sess_fd51c269cdac62bb339dfef933aba03cd45b6cef4f3381a083b5fff7d0249b4b": {
+      "userId": "usr_ar_60fce0",
+      "expiresAt": 1794305553146,
+      "status": "active"
+    },
+    "aur_sess_9241f26d9029fbf4794a3ad8791cd8411ba5fd5e6352cea394e0029542f1f72c": {
+      "userId": "usr_31045fa0158d",
+      "expiresAt": 1794305659451,
+      "status": "active"
     }
   },
   "supportTickets": [],
@@ -2865,6 +3205,279 @@
       "attempts": 0,
       "createdAt": 1792842733206,
       "expiresAt": 1792843633206
+    },
+    "aur_pnd_e796e5554ff045b0e0d8ed818ac7bd0542d2bb788e9dbf5f": {
+      "token": "aur_pnd_e796e5554ff045b0e0d8ed818ac7bd0542d2bb788e9dbf5f",
+      "userId": "usr_31045fa0158d",
+      "deviceId": "dev_unrecognized_browser_1",
+      "deviceName": "Web Browser",
+      "ipAddress": "127.0.0.1",
+      "attempts": 5,
+      "createdAt": 1793700774842,
+      "expiresAt": 1793701674842,
+      "otpCode": "915815",
+      "otpExpiresAt": 1793701384059,
+      "lockoutUntil": 1793701096165
+    },
+    "aur_pnd_dcc13a14ca97e7aa86a44dbd05df9ac8198e4cc0ebe3d872": {
+      "token": "aur_pnd_dcc13a14ca97e7aa86a44dbd05df9ac8198e4cc0ebe3d872",
+      "userId": "usr_31045fa0158d",
+      "deviceId": "dev_unrecognized_browser_1",
+      "deviceName": "Web Browser",
+      "ipAddress": "127.0.0.1",
+      "attempts": 0,
+      "createdAt": 1793700804714,
+      "expiresAt": 1793701704714
+    },
+    "aur_pnd_a58e2d53973e8f26c96a9f62e6bf1926aa5de1aa9d8d4f82": {
+      "token": "aur_pnd_a58e2d53973e8f26c96a9f62e6bf1926aa5de1aa9d8d4f82",
+      "userId": "usr_31045fa0158d",
+      "deviceId": "dev_trusted_macbook_1",
+      "deviceName": "Web Browser",
+      "ipAddress": "127.0.0.1",
+      "attempts": 0,
+      "createdAt": 1793700816158,
+      "expiresAt": 1793701716158
+    },
+    "aur_pnd_28f5dccaebe51e57b05cbe98aea2ab9e67559e64e6a2b1f6": {
+      "token": "aur_pnd_28f5dccaebe51e57b05cbe98aea2ab9e67559e64e6a2b1f6",
+      "userId": "usr_31045fa0158d",
+      "deviceId": "dev_trusted_macbook_1",
+      "deviceName": "Web Browser",
+      "ipAddress": "127.0.0.1",
+      "attempts": 0,
+      "createdAt": 1793700844267,
+      "expiresAt": 1793701744267
     }
+  },
+  "cipherAudits": [
+    {
+      "operatorId": "usr_cipher_cga",
+      "operatorEmail": "contact.cga.usa@gmail.com",
+      "action": "correct_transaction",
+      "targetType": "transaction",
+      "targetId": "tx_02",
+      "targetIdentifier": "AUR-20261021-39B1 (TRANSFER)",
+      "previousValue": {
+        "description": "Transfer to High-Yield Reserve Savings",
+        "category": "Transfer",
+        "timestamp": "2026-10-22T12:10:26.303Z",
+        "amount": 500,
+        "recipientName": "Alex Morgan",
+        "recipientAccount": "1100892041",
+        "recipientBank": "Aurelith Reserve",
+        "status": "completed"
+      },
+      "newValue": {
+        "amount": 525.5
+      },
+      "reason": "Adjusted transaction amount following compliance reconciliation",
+      "metadata": {
+        "amendmentIndex": 1,
+        "ledgerReconciled": true,
+        "accountBalanceAfter": 16875.25
+      },
+      "result": "success",
+      "id": "audit_b0e24185b32d",
+      "timestamp": "2026-11-02T12:16:41.748Z"
+    },
+    {
+      "operatorId": "usr_cipher_cga",
+      "operatorEmail": "contact.cga.usa@gmail.com",
+      "action": "restore_transfer_access",
+      "targetType": "user",
+      "targetId": "usr_alex_morgan",
+      "targetIdentifier": "AR-882190 (Alex Morgan)",
+      "previousValue": {
+        "transferAccess": "restricted"
+      },
+      "newValue": {
+        "transferAccess": "enabled"
+      },
+      "reason": "Cleared after verification",
+      "result": "success",
+      "id": "audit_7fe6589a8616",
+      "timestamp": "2026-11-02T12:16:33.033Z"
+    },
+    {
+      "operatorId": "usr_cipher_cga",
+      "operatorEmail": "contact.cga.usa@gmail.com",
+      "action": "restrict_transfer_access",
+      "targetType": "user",
+      "targetId": "usr_alex_morgan",
+      "targetIdentifier": "AR-882190 (Alex Morgan)",
+      "previousValue": {
+        "transferAccess": "enabled"
+      },
+      "newValue": {
+        "transferAccess": "restricted"
+      },
+      "reason": "Security flag for unusual device location",
+      "result": "success",
+      "id": "audit_e97ebfe55c26",
+      "timestamp": "2026-11-02T12:16:33.012Z"
+    },
+    {
+      "operatorId": "usr_cipher_cga",
+      "operatorEmail": "contact.cga.usa@gmail.com",
+      "action": "correct_transaction",
+      "targetType": "transaction",
+      "targetId": "tx_adj_9c9680525ea5",
+      "targetIdentifier": "CIPHER-TEST-ADJ-001 (BALANCE_ADJUSTMENT)",
+      "previousValue": {
+        "description": "Cipher Administrative CREDIT Adjustment: Verified audit adjustment for test demonstration",
+        "category": "Administrative Adjustment",
+        "timestamp": "2026-11-02T12:16:08.175Z",
+        "amount": 1500,
+        "senderName": "Aurelith Reserve Cipher Operations",
+        "recipientName": "Alex Morgan",
+        "status": "completed"
+      },
+      "newValue": {
+        "description": "Amended Memo: Client Investment Inflow",
+        "category": "Audited Financial Transfer"
+      },
+      "reason": "Compliance correction of description and classification",
+      "metadata": {
+        "amendmentIndex": 1,
+        "ledgerReconciled": false
+      },
+      "result": "success",
+      "id": "audit_e84e0c7b7aa7",
+      "timestamp": "2026-11-02T12:16:33.003Z"
+    },
+    {
+      "operatorId": "usr_cipher_cga",
+      "operatorEmail": "contact.cga.usa@gmail.com",
+      "action": "balance_adjustment_credit",
+      "targetType": "account",
+      "targetId": "acc_chk_01",
+      "targetIdentifier": "AR-882190 • Aurelith Premier Checking (1100482910)",
+      "previousValue": {
+        "balance": 16400.75,
+        "availableBalance": 16400.75
+      },
+      "newValue": {
+        "balance": 16900.75,
+        "availableBalance": 16900.75
+      },
+      "reason": "Verified audit adjustment for test demonstration",
+      "metadata": {
+        "adjustmentAmount": 500,
+        "direction": "credit",
+        "transactionReference": "CIPHER-TEST-ADJ-002"
+      },
+      "result": "success",
+      "id": "audit_d3d67fc26328",
+      "timestamp": "2026-11-02T12:16:32.994Z"
+    },
+    {
+      "operatorId": "usr_cipher_cga",
+      "operatorEmail": "contact.cga.usa@gmail.com",
+      "action": "balance_adjustment_credit",
+      "targetType": "account",
+      "targetId": "acc_chk_01",
+      "targetIdentifier": "AR-882190 • Aurelith Premier Checking (1100482910)",
+      "previousValue": {
+        "balance": 14900.75,
+        "availableBalance": 14900.75
+      },
+      "newValue": {
+        "balance": 16400.75,
+        "availableBalance": 16400.75
+      },
+      "reason": "Verified audit adjustment for test demonstration",
+      "metadata": {
+        "adjustmentAmount": 1500,
+        "direction": "credit",
+        "transactionReference": "CIPHER-TEST-ADJ-001"
+      },
+      "result": "success",
+      "id": "audit_ed7e94962022",
+      "timestamp": "2026-11-02T12:16:08.175Z"
+    },
+    {
+      "operatorId": "usr_ar_60fce0",
+      "operatorEmail": "aurelithreserve@gmail.com",
+      "action": "balance_adjustment_credit",
+      "targetType": "account",
+      "targetId": "acc_chk_01",
+      "targetIdentifier": "AR-882190 • Aurelith Premier Checking (1100482910)",
+      "previousValue": {
+        "balance": 14850.75,
+        "availableBalance": 14850.75
+      },
+      "newValue": {
+        "balance": 14900.75,
+        "availableBalance": 14900.75
+      },
+      "reason": "Cipher authorized verification credit",
+      "metadata": {
+        "adjustmentAmount": 50,
+        "direction": "credit",
+        "transactionReference": "CIPHER-ADJ-20261101-4CA015"
+      },
+      "result": "success",
+      "id": "audit_4ea2161380ca",
+      "timestamp": "2026-11-01T10:28:42.729Z"
+    },
+    {
+      "operatorId": "usr_ar_60fce0",
+      "operatorEmail": "aurelithreserve@gmail.com",
+      "action": "restore_transfer_access",
+      "targetType": "user",
+      "targetId": "usr_alex_morgan",
+      "targetIdentifier": "AR-882190 (Alex Morgan)",
+      "previousValue": {
+        "transferAccess": "restricted"
+      },
+      "newValue": {
+        "transferAccess": "enabled"
+      },
+      "reason": "Testing completed",
+      "result": "success",
+      "id": "audit_366f7231a7f6",
+      "timestamp": "2026-11-01T10:28:38.385Z"
+    },
+    {
+      "operatorId": "usr_ar_60fce0",
+      "operatorEmail": "aurelithreserve@gmail.com",
+      "action": "restrict_transfer_access",
+      "targetType": "user",
+      "targetId": "usr_alex_morgan",
+      "targetIdentifier": "AR-882190 (Alex Morgan)",
+      "previousValue": {
+        "transferAccess": "enabled"
+      },
+      "newValue": {
+        "transferAccess": "restricted"
+      },
+      "reason": "Test restriction",
+      "result": "success",
+      "id": "audit_1ba821b9f1cb",
+      "timestamp": "2026-11-01T10:28:29.774Z"
+    }
+  ],
+  "appConfig": {
+    "maintenanceNotice": {
+      "enabled": false,
+      "headline": "Scheduled System Maintenance",
+      "message": "Core banking and interbank Fedwire settlement services are fully operational.",
+      "severity": "info"
+    },
+    "transfersActive": true,
+    "transfersNotice": "Fedwire and Automated Clearing House (FedACH) rails active.",
+    "customerServiceNotice": {
+      "enabled": true,
+      "message": "Aurelith Reserve Private Client Concierge available 24/7."
+    },
+    "supportedDisplayCurrencies": [
+      "USD",
+      "EUR",
+      "GBP",
+      "CHF"
+    ],
+    "updatedAt": "2026-10-31T16:23:12.026Z",
+    "updatedBy": "system"
   }
 }
