@@ -3110,6 +3110,16 @@
       "userId": "usr_31045fa0158d",
       "expiresAt": 1794305659451,
       "status": "active"
+    },
+    "aur_sess_457939b3008f19a0ae5f2d79b1e85841720995213ec8c26607f129d4e41f529c": {
+      "userId": "usr_ar_60fce0",
+      "expiresAt": 1794477747278,
+      "status": "active"
+    },
+    "aur_sess_f0e5d029ffdda40acd5167fbefbb6e043ab745a0ed8803b519a0fe76e216b094": {
+      "userId": "usr_alex_morgan",
+      "expiresAt": 1794477861125,
+      "status": "active"
     }
   },
   "supportTickets": [],

@@ -468,17 +468,30 @@ async function startServer() {
         ipAddress: clientIp,
       });
 
+      const maskEmail = (em: string) => {
+        if (!em || !em.includes('@')) return '******';
+        const [local, dom] = em.split('@');
+        return `${local.charAt(0)}***${local.charAt(local.length - 1)}@${dom}`;
+      };
+      const maskPhone = (ph: string) => {
+        if (!ph || ph.length < 4) return '***-****';
+        return `+1 (***) ***-${ph.slice(-4)}`;
+      };
+
       return res.json({
         requireDeviceVerification: true,
         verificationToken,
         hasPaymentPin: Boolean(user.paymentPinHash && user.paymentPinSalt),
+        maskedEmail: maskEmail(user.email),
+        maskedPhone: maskPhone(user.phoneNumber),
+        clientIdHint: user.clientId ? `${user.clientId.slice(0, 3)}****` : undefined,
         deviceInfo: {
           deviceName: parsedDeviceName,
           ipAddress: clientIp,
           browser: deviceInfo?.browser,
           os: deviceInfo?.os,
         },
-        message: 'For your security, please verify your payment PIN to gain full access to this Aurelith Reserve account.',
+        message: 'For your security, please complete multi-factor verification to access this Aurelith Reserve account.',
       });
     } catch (err: any) {
       console.error('Login error:', err);
@@ -559,17 +572,30 @@ async function startServer() {
         ipAddress: clientIp,
       });
 
+      const maskEmail = (em: string) => {
+        if (!em || !em.includes('@')) return '******';
+        const [local, dom] = em.split('@');
+        return `${local.charAt(0)}***${local.charAt(local.length - 1)}@${dom}`;
+      };
+      const maskPhone = (ph: string) => {
+        if (!ph || ph.length < 4) return '***-****';
+        return `+1 (***) ***-${ph.slice(-4)}`;
+      };
+
       return res.json({
         requireDeviceVerification: true,
         verificationToken,
         hasPaymentPin: Boolean(user.paymentPinHash && user.paymentPinSalt),
+        maskedEmail: maskEmail(user.email),
+        maskedPhone: maskPhone(user.phoneNumber),
+        clientIdHint: user.clientId ? `${user.clientId.slice(0, 3)}****` : undefined,
         deviceInfo: {
           deviceName: parsedDeviceName,
           ipAddress: clientIp,
           browser: deviceInfo?.browser,
           os: deviceInfo?.os,
         },
-        message: 'For your security, please verify your payment PIN to gain full access to this Aurelith Reserve account.',
+        message: 'For your security, please complete multi-factor verification to access this Aurelith Reserve account.',
       });
     } catch (err: any) {
       console.error('Phone login error:', err);
@@ -776,10 +802,10 @@ async function startServer() {
     }
   });
 
-  // Verify Payment PIN and Optional OTP for New Device
+  // Verify Payment PIN, Client ID, and OTP for New Device
   app.post('/api/auth/verify-new-device', (req: Request, res: Response) => {
     try {
-      const { verificationToken, paymentPin, otpCode, deviceId, deviceInfo } = req.body;
+      const { verificationToken, paymentPin, otpCode, clientId, deviceId, deviceInfo } = req.body;
 
       if (!verificationToken) {
         return res.status(400).json({ error: 'Verification token is required.' });
@@ -803,7 +829,26 @@ async function startServer() {
         return res.status(404).json({ error: 'User account not found.' });
       }
 
-      // If OTP was dispatched, verify it
+      // Factor 1: Verify Customer Client ID if provided
+      if (clientId && typeof clientId === 'string' && clientId.trim()) {
+        const cleanReqClient = clientId.trim().toUpperCase();
+        const cleanUserClient = (user.clientId || '').trim().toUpperCase();
+        if (cleanReqClient !== cleanUserClient) {
+          const attemptResult = DatabaseManager.recordFailedPinAttempt(verificationToken);
+          if (attemptResult.isLocked) {
+            return res.status(429).json({
+              error: 'Too many incorrect attempts. For security, please wait 5 minutes before trying again.',
+              isLocked: true,
+            });
+          }
+          return res.status(401).json({
+            error: 'Incorrect Client ID. Please enter the valid Client ID associated with your Aurelith Reserve account (e.g. AR-XXXXXX).',
+            attemptsRemaining: Math.max(0, 5 - attemptResult.attempts),
+          });
+        }
+      }
+
+      // Factor 3: If OTP was dispatched or code provided, verify it
       if (pending.otpCode && otpCode) {
         if (pending.otpExpiresAt && pending.otpExpiresAt < Date.now()) {
           return res.status(400).json({ error: 'Verification code has expired. Please request a new one.' });
@@ -817,7 +862,7 @@ async function startServer() {
             });
           }
           return res.status(401).json({
-            error: 'Incorrect one-time authorization code. Please verify the code sent to your registered contact.',
+            error: 'Incorrect one-time authorization code. Please verify the 6-digit code sent to your registered contact.',
             attemptsRemaining: Math.max(0, 5 - attemptResult.attempts),
           });
         }
@@ -1192,6 +1237,9 @@ async function startServer() {
         swiftCode,
         recipientName,
         bankName,
+        bankAddress,
+        recipientAddress,
+        accountType,
         amount,
         note,
         paymentReference,
@@ -1286,6 +1334,9 @@ async function startServer() {
       let verifiedRouting = destinationRoutingNumber || '111301122';
       let verifiedSwift = swiftCode || 'AURUS33D';
       let authoritativeRecipientName = recipientName;
+      let verifiedBankAddress = bankAddress;
+      let verifiedRecipientAddress = recipientAddress;
+      let verifiedAccountType = accountType;
 
       if (destinationType === 'external') {
         if (!destinationAccountNumber) {
@@ -1310,6 +1361,15 @@ async function startServer() {
           verifiedRouting = validation.validatedRecipient.routingNumber;
           verifiedSwift = validation.validatedRecipient.swiftCode;
           authoritativeRecipientName = validation.validatedRecipient.recipientName;
+          if (validation.validatedRecipient.bankAddress) {
+            verifiedBankAddress = validation.validatedRecipient.bankAddress;
+          }
+          if (validation.validatedRecipient.recipientAddress && !verifiedRecipientAddress) {
+            verifiedRecipientAddress = validation.validatedRecipient.recipientAddress;
+          }
+          if (validation.validatedRecipient.accountType && !verifiedAccountType) {
+            verifiedAccountType = validation.validatedRecipient.accountType;
+          }
         }
       }
 
@@ -1337,6 +1397,11 @@ async function startServer() {
         recipientName: authoritativeRecipientName || 'Recipient',
         recipientAccount: destinationAccountNumber,
         recipientBank: verifiedBankName,
+        routingNumber: verifiedRouting,
+        swiftCode: verifiedSwift,
+        bankAddress: verifiedBankAddress,
+        recipientAddress: verifiedRecipientAddress,
+        accountType: verifiedAccountType,
         status: 'completed',
         fee,
         timestamp: new Date().toISOString(),
@@ -1437,6 +1502,10 @@ async function startServer() {
             bankName: verifiedBankName,
             accountNumber: destinationAccountNumber,
             routingNumber: verifiedRouting,
+            swiftCode: verifiedSwift,
+            bankAddress: verifiedBankAddress,
+            recipientAddress: verifiedRecipientAddress,
+            accountType: verifiedAccountType,
             nickname: req.body.nickname,
             createdAt: new Date().toISOString(),
           });
@@ -1458,6 +1527,9 @@ async function startServer() {
           recipientBank: verifiedBankName,
           routingNumber: verifiedRouting,
           swiftCode: verifiedSwift,
+          bankAddress: verifiedBankAddress || undefined,
+          recipientAddress: verifiedRecipientAddress || undefined,
+          accountType: verifiedAccountType || undefined,
           paymentReference: finalNarration || undefined,
           timestamp: debitTx.timestamp,
           status: 'completed',
@@ -2952,7 +3024,18 @@ async function startServer() {
       const operator = (req as any).user as UserRecord;
       const { targetUserId, targetAccountId, type, amount, reason, reference } = req.body;
 
-      if (!targetUserId || !targetAccountId) {
+      let resolvedUserId = targetUserId;
+      let resolvedAccountId = targetAccountId;
+      const db = DatabaseManager.getDB();
+
+      if (!resolvedUserId && resolvedAccountId) {
+        const found = db.users.find((u) =>
+          u.accounts.some((a) => a.id === resolvedAccountId || a.accountNumber === resolvedAccountId)
+        );
+        if (found) resolvedUserId = found.id;
+      }
+
+      if (!resolvedUserId || !resolvedAccountId) {
         return res.status(400).json({ error: 'Target customer ID and account ID are required.' });
       }
       if (type !== 'credit' && type !== 'debit') {
@@ -2969,8 +3052,8 @@ async function startServer() {
       const result = DatabaseManager.executeBalanceAdjustment({
         operatorId: operator.id,
         operatorEmail: operator.email,
-        targetUserId,
-        targetAccountId,
+        targetUserId: resolvedUserId,
+        targetAccountId: resolvedAccountId,
         type,
         amount: numAmount,
         reason: reason.trim(),

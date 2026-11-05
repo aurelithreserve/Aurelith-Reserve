@@ -19,7 +19,7 @@ export function maskAccountNumber(acc?: string): string {
 export function generateReceiptCanvas(receipt: TransferReceipt): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   const width = 1200;
-  const height = 1560;
+  const height = 1680;
   canvas.width = width;
   canvas.height = height;
 
@@ -144,14 +144,28 @@ export function generateReceiptCanvas(receipt: TransferReceipt): HTMLCanvasEleme
     ['Date & Time', new Date(receipt.timestamp).toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'medium' })],
     ['Funding Account', `${receipt.sourceAccountName} (${maskAccountNumber(receipt.sourceAccountNumber)})`],
     ['Recipient Bank', receipt.recipientBank || 'Aurelith Reserve'],
-    ['Verified Recipient', receipt.recipientName, true],
-    ['Recipient Account', maskAccountNumber(receipt.recipientAccountNumber)],
   ];
+
+  if (receipt.bankAddress) {
+    tableData.push(['Bank Address', receipt.bankAddress]);
+  }
+
+  tableData.push(['Verified Recipient', receipt.recipientName, true]);
+
+  if (receipt.recipientAddress) {
+    tableData.push(['Recipient Residential Address', receipt.recipientAddress]);
+  }
+
+  tableData.push(['Recipient Account', maskAccountNumber(receipt.recipientAccountNumber)]);
+
+  if (receipt.accountType) {
+    tableData.push(['Account Type', receipt.accountType]);
+  }
 
   if (receipt.routingNumber) {
     tableData.push(['Routing Number (ABA)', receipt.routingNumber]);
   }
-  if (receipt.swiftCode) {
+  if (receipt.swiftCode && receipt.recipientBank !== 'Idaho Central Credit Union (ICCU)') {
     tableData.push(['SWIFT / BIC Code', receipt.swiftCode]);
   }
   if (receipt.paymentReference) {
@@ -313,14 +327,28 @@ export function generateReceiptPdf(receipt: TransferReceipt): jsPDF {
     ['Transaction Reference', receipt.reference],
     ['Funding Account', `${receipt.sourceAccountName} (${maskAccountNumber(receipt.sourceAccountNumber)})`],
     ['Recipient Financial Institution', receipt.recipientBank || 'Aurelith Reserve'],
-    ['Verified Recipient Name', receipt.recipientName],
-    ['Recipient Account Number', maskAccountNumber(receipt.recipientAccountNumber)],
   ];
+
+  if (receipt.bankAddress) {
+    rows.push(['Bank Address', receipt.bankAddress]);
+  }
+
+  rows.push(['Verified Recipient Name', receipt.recipientName]);
+
+  if (receipt.recipientAddress) {
+    rows.push(['Recipient Residential Address', receipt.recipientAddress]);
+  }
+
+  rows.push(['Recipient Account Number', maskAccountNumber(receipt.recipientAccountNumber)]);
+
+  if (receipt.accountType) {
+    rows.push(['Account Type', receipt.accountType]);
+  }
 
   if (receipt.routingNumber) {
     rows.push(['Routing Transit Number (ABA)', receipt.routingNumber]);
   }
-  if (receipt.swiftCode) {
+  if (receipt.swiftCode && receipt.recipientBank !== 'Idaho Central Credit Union (ICCU)') {
     rows.push(['SWIFT / BIC Wire Code', receipt.swiftCode]);
   }
   if (receipt.paymentReference) {
@@ -452,9 +480,12 @@ export function shareViaWhatsApp(receipt: TransferReceipt): void {
     `*Funding Account:* ${maskAccountNumber(receipt.sourceAccountNumber)}\n` +
     `*Recipient:* ${receipt.recipientName}\n` +
     `*Recipient Bank:* ${receipt.recipientBank || 'Aurelith Reserve'}\n` +
+    (receipt.bankAddress ? `*Bank Address:* ${receipt.bankAddress}\n` : '') +
+    (receipt.recipientAddress ? `*Recipient Address:* ${receipt.recipientAddress}\n` : '') +
     `*Account Number:* ${maskAccountNumber(receipt.recipientAccountNumber)}\n` +
+    (receipt.accountType ? `*Account Type:* ${receipt.accountType}\n` : '') +
     (receipt.routingNumber ? `*Routing (ABA):* ${receipt.routingNumber}\n` : '') +
-    (receipt.swiftCode ? `*SWIFT / BIC:* ${receipt.swiftCode}\n` : '') +
+    (receipt.swiftCode && receipt.recipientBank !== 'Idaho Central Credit Union (ICCU)' ? `*SWIFT / BIC:* ${receipt.swiftCode}\n` : '') +
     (receipt.paymentReference ? `*Payment Ref:* ${receipt.paymentReference}\n` : '') +
     `*Transfer Amount:* $${receipt.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD\n` +
     `*Transfer Fee (0.1%):* $${actualFee.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD\n` +

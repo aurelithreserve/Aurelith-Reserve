@@ -76,6 +76,34 @@
           "description": "ABA direct clearing routing transit number.",
           "maxLength": 15
         },
+        "swiftCode": {
+          "type": "string",
+          "description": "Authoritative SWIFT/BIC code for financial institution clearing.",
+          "maxLength": 20
+        },
+        "clientId": {
+          "type": "string",
+          "description": "Unique Aurelith Reserve customer Client ID.",
+          "maxLength": 30
+        },
+        "balance": {
+          "type": "number",
+          "description": "Authoritative primary account balance."
+        },
+        "availableBalance": {
+          "type": "number",
+          "description": "Authoritative available funds balance."
+        },
+        "transferAccess": {
+          "type": "string",
+          "description": "Transfer capabilities access standing.",
+          "enum": ["enabled", "restricted"]
+        },
+        "role": {
+          "type": "string",
+          "description": "User role authorization level.",
+          "enum": ["customer", "admin", "cipher"]
+        },
         "bankName": {
           "type": "string",
           "description": "Selected bank association or preferred institution.",

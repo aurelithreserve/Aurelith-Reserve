@@ -37,9 +37,12 @@ import {
   Pencil,
   ArrowRight,
 } from 'lucide-react';
-import { bankingApi, CipherStats, CipherUserRecord, CipherAuditRecord, CipherAppConfig } from '../../services/bankingApi';
+import { bankingApi, CipherStats, CipherUserRecord, CipherUserAccount, CipherAuditRecord, CipherAppConfig } from '../../services/bankingApi';
 import { BankTransaction } from '../../types/banking';
 import { formatCurrency } from '../../data/accountTiers';
+import { collection, onSnapshot, doc, setDoc } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
+import { getAuthoritativeBankInfo } from '../../utils/bankingIdentifiers';
 
 interface CipherControlPanelProps {
   onNavigateHome: () => void;
@@ -262,6 +265,122 @@ export const CipherControlPanel: React.FC<CipherControlPanelProps> = ({ onNaviga
     }
   }, [authorized, refreshAll]);
 
+  // Real-time Firestore customer & account synchronization (Section 2)
+  useEffect(() => {
+    if (!authorized) return;
+
+    const unsubscribe = onSnapshot(
+      collection(db, 'users'),
+      (snapshot) => {
+        const fsUsers: CipherUserRecord[] = snapshot.docs.map((docSnap) => {
+          const d = docSnap.data();
+          const accNum = d.accountNumber || '1029384756';
+          const authBank = getAuthoritativeBankInfo(d.bankName);
+          const routing = d.routingNumber || authBank.routingNumber;
+          const swift = d.swiftCode || authBank.swiftCode;
+          const balance = typeof d.balance === 'number' ? d.balance : 0;
+          const avail = typeof d.availableBalance === 'number' ? d.availableBalance : balance;
+          const accName = d.accountType || 'Premier Checking';
+          const accType = accName.toLowerCase().includes('savings') ? 'savings' : 'checking';
+
+          const accounts: CipherUserAccount[] =
+            d.accounts && Array.isArray(d.accounts) && d.accounts.length > 0
+              ? d.accounts.map((a: any, idx: number) => ({
+                  id: a.id || `acc_${docSnap.id}_${idx + 1}`,
+                  accountNumber: a.accountNumber || accNum,
+                  routingNumber: a.routingNumber || routing,
+                  swiftCode: a.swiftCode || swift,
+                  type: a.type || accType,
+                  name: a.name || accName,
+                  balance: typeof a.balance === 'number' ? a.balance : balance,
+                  availableBalance: typeof a.availableBalance === 'number' ? a.availableBalance : avail,
+                  status: a.status || 'active',
+                }))
+              : [
+                  {
+                    id: `acc_${docSnap.id}_1`,
+                    accountNumber: accNum,
+                    routingNumber: routing,
+                    swiftCode: swift,
+                    type: accType,
+                    name: accName,
+                    balance,
+                    availableBalance: avail,
+                    status: d.status || 'active',
+                  },
+                ];
+
+          return {
+            id: d.id || `usr_${docSnap.id}`,
+            clientId: d.clientId || `AR-${docSnap.id.slice(0, 6).toUpperCase()}`,
+            firstName: d.firstName || '',
+            middleName: d.middleName || undefined,
+            lastName: d.lastName || '',
+            email: d.email || '',
+            phoneNumber: d.phoneNumber || '',
+            bankName: d.bankName || authBank.name,
+            role: d.role || 'customer',
+            status: d.status || 'active',
+            transferAccess: d.transferAccess === 'restricted' ? 'restricted' : 'enabled',
+            transferRestrictionReason: d.transferRestrictionReason,
+            flaggedForReview: Boolean(d.flaggedForReview),
+            flagReason: d.flagReason,
+            createdAt: d.createdAt || new Date().toISOString(),
+            accounts,
+            totalBalance: accounts.reduce((sum, a) => sum + (a.balance || 0), 0),
+          };
+        });
+
+        setUsers((prevBackendUsers) => {
+          if (!prevBackendUsers || prevBackendUsers.length === 0) {
+            return fsUsers;
+          }
+          const merged = [...prevBackendUsers];
+          fsUsers.forEach((fu) => {
+            const existingIdx = merged.findIndex(
+              (mu) =>
+                mu.id === fu.id ||
+                (fu.email && mu.email.toLowerCase() === fu.email.toLowerCase()) ||
+                (fu.clientId && mu.clientId.toUpperCase() === fu.clientId.toUpperCase())
+            );
+            if (existingIdx >= 0) {
+              merged[existingIdx] = {
+                ...merged[existingIdx],
+                transferAccess: fu.transferAccess,
+                transferRestrictionReason: fu.transferRestrictionReason,
+                bankName: fu.bankName,
+                phoneNumber: fu.phoneNumber || merged[existingIdx].phoneNumber,
+                accounts: merged[existingIdx].accounts.map((a) => {
+                  const matchingFsAcc = fu.accounts.find(
+                    (fa) => fa.id === a.id || fa.accountNumber === a.accountNumber
+                  );
+                  if (matchingFsAcc) {
+                    return {
+                      ...a,
+                      balance: matchingFsAcc.balance,
+                      availableBalance: matchingFsAcc.availableBalance,
+                      swiftCode: a.swiftCode || matchingFsAcc.swiftCode,
+                      routingNumber: a.routingNumber || matchingFsAcc.routingNumber,
+                    };
+                  }
+                  return a;
+                }),
+              };
+            } else {
+              merged.push(fu);
+            }
+          });
+          return merged;
+        });
+      },
+      (err) => {
+        console.warn('Cipher real-time Firestore synchronization notice:', err);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [authorized]);
+
   // Handle User Selection for Individual View
   const handleSelectUser = async (u: CipherUserRecord) => {
     setSelectedUser(u);
@@ -314,6 +433,24 @@ export const CipherControlPanel: React.FC<CipherControlPanelProps> = ({ onNaviga
 
       if (selectedUser?.id === transferAccessUser.id) {
         setSelectedUser((prev) => (prev ? { ...prev, transferAccess: res.transferAccess } : null));
+      }
+
+      // Update Firestore document under users/{uid} for real-time propagation across app
+      try {
+        const uid = transferAccessUser.id.startsWith('usr_')
+          ? transferAccessUser.id.slice(4)
+          : transferAccessUser.id;
+        await setDoc(
+          doc(db, 'users', uid),
+          {
+            transferAccess: res.transferAccess,
+            transferRestrictionReason: transferAccessReason.trim() || null,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (fsErr) {
+        console.warn('Firestore transfer access sync notice:', fsErr);
       }
 
       setTransferAccessModalOpen(false);
@@ -371,6 +508,25 @@ export const CipherControlPanel: React.FC<CipherControlPanelProps> = ({ onNaviga
       setIsConfirmingAdjustment(false);
       setAdjustAmount('');
       setAdjustReason('');
+
+      // Synchronize balance update to Firestore document for real-time propagation across app
+      try {
+        const targetUser = selectedUser || users.find((u) => u.accounts.some((a) => a.id === adjustAccountId));
+        if (targetUser) {
+          const uid = targetUser.id.startsWith('usr_') ? targetUser.id.slice(4) : targetUser.id;
+          await setDoc(
+            doc(db, 'users', uid),
+            {
+              balance: updatedBalance,
+              availableBalance: updatedBalance,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        }
+      } catch (fsErr) {
+        console.warn('Firestore balance adjustment sync notice:', fsErr);
+      }
 
       await refreshAll();
 
@@ -477,6 +633,22 @@ export const CipherControlPanel: React.FC<CipherControlPanelProps> = ({ onNaviga
       const uData = await bankingApi.getCipherUser(selectedUser.id);
       if (uData.transactions) {
         setUserTransactions(uData.transactions);
+      }
+
+      // Synchronize balance update to Firestore document for real-time propagation across app
+      try {
+        const uid = selectedUser.id.startsWith('usr_') ? selectedUser.id.slice(4) : selectedUser.id;
+        await setDoc(
+          doc(db, 'users', uid),
+          {
+            balance: updatedAccount.balance,
+            availableBalance: updatedAccount.availableBalance,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (fsErr) {
+        console.warn('Firestore direct balance adjustment sync notice:', fsErr);
       }
 
       setDirectBalanceSuccess(

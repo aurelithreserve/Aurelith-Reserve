@@ -292,19 +292,37 @@ export const bankingApi = {
   },
 
   verifyNewDevice: async (
-    verificationToken: string,
-    paymentPin: string,
-    otpCode?: string
+    tokenOrPayload:
+      | string
+      | { verificationToken: string; paymentPin: string; otpCode?: string; clientId?: string },
+    paymentPin?: string,
+    otpCode?: string,
+    clientId?: string
   ): Promise<{ token: string; user: BankingUser; message: string; deviceTrustToken?: string }> => {
     const devicePayload = getDeviceAuthPayload();
-    const res = await request<any>('/api/auth/verify-new-device', {
-      method: 'POST',
-      body: JSON.stringify({
-        verificationToken,
+    let body: any;
+
+    if (typeof tokenOrPayload === 'object') {
+      body = {
+        verificationToken: tokenOrPayload.verificationToken,
+        paymentPin: tokenOrPayload.paymentPin,
+        otpCode: tokenOrPayload.otpCode,
+        clientId: tokenOrPayload.clientId,
+        ...devicePayload,
+      };
+    } else {
+      body = {
+        verificationToken: tokenOrPayload,
         paymentPin,
         otpCode,
+        clientId,
         ...devicePayload,
-      }),
+      };
+    }
+
+    const res = await request<any>('/api/auth/verify-new-device', {
+      method: 'POST',
+      body: JSON.stringify(body),
     });
 
     setAuthToken(res.token);
@@ -426,6 +444,7 @@ export const bankingApi = {
     const cleanAcc = (payload.accountNumber || '').replace(/[\s\r\n\t]+/g, '').replace(/\D/g, '');
     const known = KNOWN_VERIFIED_RECIPIENTS[cleanAcc];
     if (known) {
+      const bObj = SUPPORTED_BANKS.find((b) => b.name === (payload.bankName || known.bankName));
       return {
         verified: true,
         isPreviouslyUsed: false,
@@ -439,6 +458,8 @@ export const bankingApi = {
           accountType: known.accountType,
           status: 'eligible',
           notes: 'Pre-cleared interbank routing destination.',
+          bankAddress: bObj?.address || known.bankAddress,
+          recipientAddress: known.recipientAddress,
         },
       };
     }
@@ -461,6 +482,7 @@ export const bankingApi = {
           accountType: 'Commercial / Personal Deposit Account',
           status: 'eligible',
           notes: 'Eligible clearing network participant.',
+          bankAddress: matchedBank.address,
         },
       };
     }
@@ -501,9 +523,12 @@ export const bankingApi = {
       const routingValid = !payload.routingNumber
         ? false
         : payload.routingNumber.trim().replace(/\s+/g, '') === bank.routingNumber.replace(/\s+/g, '');
+      const bankSupportsSwift = bank.supportsSwift !== false && !!bank.swiftCode && bank.id !== 'iccu';
       const cleanSwift = (payload.swiftCode || '').trim().toUpperCase();
-      const expectedSwift = bank.swiftCode.toUpperCase();
-      const swiftValid = !payload.swiftCode
+      const expectedSwift = (bank.swiftCode || '').toUpperCase();
+      const swiftValid = !bankSupportsSwift
+        ? true
+        : !payload.swiftCode
         ? false
         : cleanSwift === expectedSwift ||
           cleanSwift === `${expectedSwift}XXX` ||
@@ -517,11 +542,11 @@ export const bankingApi = {
             ? `Routing number does not match ${bank.name} records.`
             : undefined,
         swiftError:
-          payload.swiftCode && payload.swiftCode.length >= 8 && !swiftValid
+          bankSupportsSwift && payload.swiftCode && payload.swiftCode.length >= 8 && !swiftValid
             ? `SWIFT code does not match ${bank.name} records.`
             : undefined,
         authoritativeRouting: bank.routingNumber,
-        authoritativeSwift: bank.swiftCode,
+        authoritativeSwift: bankSupportsSwift ? bank.swiftCode : '',
       };
     }
   },
@@ -540,6 +565,9 @@ export const bankingApi = {
     saveBeneficiary?: boolean;
     nickname?: string;
     bankName?: string;
+    bankAddress?: string;
+    recipientAddress?: string;
+    accountType?: string;
     paymentPin?: string;
   }): Promise<{ message: string; receipt: TransferReceipt; user: BankingUser }> => {
     return request('/api/banking/transfer', {

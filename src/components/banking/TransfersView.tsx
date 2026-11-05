@@ -81,6 +81,11 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
   // Field 4: Populated SWIFT/BIC Code
   const [swiftCode, setSwiftCode] = useState('');
 
+  // Standardized Banking Details (All Supported Banks)
+  const [bankAddress, setBankAddress] = useState('');
+  const [recipientAddress, setRecipientAddress] = useState('');
+  const [accountType, setAccountType] = useState('Premier Checking');
+
   // Field 5: Transfer Amount
   const [amount, setAmount] = useState('');
 
@@ -258,16 +263,26 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
         setSelectedBank(activeBank);
         setWasBankAutoSelected(true);
 
+        setBankAddress(res.recipient.bankAddress || activeBank.address || '');
+        if (res.recipient.recipientAddress) {
+          setRecipientAddress(res.recipient.recipientAddress);
+        }
+        if (res.recipient.accountType) {
+          setAccountType(res.recipient.accountType);
+        }
+
+        const isIccuOrNoSwift = activeBank.id === 'iccu' || activeBank.supportsSwift === false;
+
         // Check if Previously Used Recipient (Section 5 & 6)
         if (res.isPreviouslyUsed) {
           setIsPreviouslyUsedRecipient(true);
           setLastTransferDate(res.lastTransferDate);
           const rNum = res.recipient.routingNumber || activeBank.routingNumber;
-          const sCode = res.recipient.swiftCode || activeBank.swiftCode;
+          const sCode = isIccuOrNoSwift ? '' : (res.recipient.swiftCode || activeBank.swiftCode);
           setRoutingNumber(rNum);
           setSwiftCode(sCode);
           setRoutingValid(Boolean(rNum));
-          setSwiftValid(Boolean(sCode));
+          setSwiftValid(isIccuOrNoSwift ? true : Boolean(sCode));
           setRoutingError('');
           setSwiftError('');
         } else {
@@ -277,7 +292,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
           setRoutingNumber('');
           setSwiftCode('');
           setRoutingValid(false);
-          setSwiftValid(false);
+          setSwiftValid(isIccuOrNoSwift ? true : false);
           setRoutingError('');
           setSwiftError('');
         }
@@ -407,6 +422,12 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
       setSwiftError('');
       return;
     }
+    const isIccuOrNoSwift = selectedBank.id === 'iccu' || selectedBank.supportsSwift === false;
+    if (isIccuOrNoSwift) {
+      setSwiftValid(true);
+      setSwiftError('');
+      return;
+    }
     const expected = selectedBank.swiftCode.toUpperCase();
     const matches = clean === expected || clean === `${expected}XXX` || (expected.length === 11 && clean === expected.slice(0, 8));
     if (matches) {
@@ -430,6 +451,9 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
     setIsPreviouslyUsedRecipient(false);
     setLastTransferDate(undefined);
     setRecipientName('');
+    setBankAddress('');
+    setRecipientAddress('');
+    setAccountType('Premier Checking');
     setRoutingNumber('');
     setSwiftCode('');
     setRoutingValid(false);
@@ -446,6 +470,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
   // Handle Bank Selection
   const handleSelectBank = (bank: BankInstitution) => {
     setSelectedBank(bank);
+    setBankAddress(bank.address || '');
     setIsBankDropdownOpen(false);
     setBankSearch('');
     setRequiresBankSelection(false);
@@ -453,25 +478,39 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
     setWasBankAutoSelected(false);
     setVerificationError('');
 
+    const isIccuOrNoSwift = bank.id === 'iccu' || bank.supportsSwift === false;
+
     if (isPreviouslyUsedRecipient) {
       setRoutingNumber(bank.routingNumber);
-      setSwiftCode(bank.swiftCode);
+      if (isIccuOrNoSwift) {
+        setSwiftCode('');
+        setSwiftValid(true);
+        setSwiftError('');
+      } else {
+        setSwiftCode(bank.swiftCode);
+        setSwiftValid(true);
+      }
       setRoutingValid(true);
-      setSwiftValid(true);
     } else {
+      if (isIccuOrNoSwift) {
+        setSwiftCode('');
+        setSwiftValid(true);
+        setSwiftError('');
+      } else {
+        if (swiftCode) {
+          const expectedSwift = bank.swiftCode.toUpperCase();
+          const cleanSwift = swiftCode.trim().toUpperCase();
+          const isValid = cleanSwift === expectedSwift || cleanSwift === `${expectedSwift}XXX`;
+          setSwiftValid(isValid);
+          setSwiftError(isValid ? '' : (cleanSwift.length >= 8 ? `SWIFT code does not match ${bank.name} records.` : ''));
+        }
+      }
       if (routingNumber) {
         const expectedRouting = bank.routingNumber.replace(/\s+/g, '');
         const cleanRouting = routingNumber.trim().replace(/\s+/g, '');
         const isValid = cleanRouting === expectedRouting;
         setRoutingValid(isValid);
         setRoutingError(isValid ? '' : (cleanRouting.length >= 9 ? `Routing number does not match ${bank.name} records.` : ''));
-      }
-      if (swiftCode) {
-        const expectedSwift = bank.swiftCode.toUpperCase();
-        const cleanSwift = swiftCode.trim().toUpperCase();
-        const isValid = cleanSwift === expectedSwift || cleanSwift === `${expectedSwift}XXX`;
-        setSwiftValid(isValid);
-        setSwiftError(isValid ? '' : (cleanSwift.length >= 8 ? `SWIFT code does not match ${bank.name} records.` : ''));
       }
     }
 
@@ -484,6 +523,10 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
     setTransferType('external');
     setAccountNumber(b.accountNumber);
     setRoutingNumber(b.routingNumber || '');
+    if (b.name) setRecipientName(b.name);
+    if (b.bankAddress) setBankAddress(b.bankAddress);
+    if (b.recipientAddress) setRecipientAddress(b.recipientAddress);
+    if (b.accountType) setAccountType(b.accountType);
     setVerificationError('');
     setIsVerifying(true);
     setIsPreviouslyUsedRecipient(true);
@@ -538,13 +581,28 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
         setErrorMessage('Please enter a valid recipient account number.');
         return;
       }
-      if (!verifiedRecipient) {
-        setErrorMessage('Recipient account has not been verified. Please enter a valid account number from the authorized directory.');
+      if (!selectedBank) {
+        setErrorMessage('Recipient financial institution could not be determined. Please select a receiving bank.');
         return;
       }
-      if (!selectedBank) {
-        setErrorMessage('Recipient financial institution could not be determined.');
+      if (!recipientName || recipientName.trim().length < 2) {
+        setErrorMessage('Please enter the Full Account Holder\'s Name.');
         return;
+      }
+      if (!verifiedRecipient) {
+        const directRec: VerifiedRecipientAccount = {
+          accountNumber,
+          recipientName: recipientName.trim(),
+          bankName: selectedBank.name,
+          routingNumber,
+          swiftCode: (selectedBank.supportsSwift !== false && selectedBank.id !== 'iccu') ? swiftCode : '',
+          accountType,
+          status: 'eligible',
+          bankAddress: selectedBank.address || bankAddress,
+          recipientAddress,
+        };
+        setVerifiedRecipient(directRec);
+        setIsRecipientConfirmed(true);
       }
       if (!routingNumber.trim()) {
         setErrorMessage('Routing number is required for interbank wire settlement.');
@@ -554,13 +612,16 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
         setErrorMessage(`Routing number does not match authoritative records for ${selectedBank.name}.`);
         return;
       }
-      if (!swiftCode.trim()) {
-        setErrorMessage('SWIFT/BIC code is required for bank transfer verification.');
-        return;
-      }
-      if (!swiftValid) {
-        setErrorMessage(`SWIFT/BIC code does not match authoritative records for ${selectedBank.name}.`);
-        return;
+      const bankRequiresSwift = selectedBank.supportsSwift !== false && !!selectedBank.swiftCode && selectedBank.id !== 'iccu';
+      if (bankRequiresSwift) {
+        if (!swiftCode.trim()) {
+          setErrorMessage('SWIFT/BIC code is required for bank transfer verification.');
+          return;
+        }
+        if (!swiftValid) {
+          setErrorMessage(`SWIFT/BIC code does not match authoritative records for ${selectedBank.name}.`);
+          return;
+        }
       }
     } else if (transferType === 'internal') {
       if (!internalTargetAccount) {
@@ -675,6 +736,9 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
         swiftCode: targetSwift.trim(),
         recipientName: targetRecipientName.trim(),
         bankName: targetBankName,
+        bankAddress: transferType === 'external' ? (selectedBank?.address || bankAddress) : '500 Crescent Court, Suite 400, Dallas, TX 75201, United States of America',
+        recipientAddress: transferType === 'external' ? (recipientAddress.trim() || undefined) : undefined,
+        accountType: transferType === 'external' ? accountType : 'Premier Checking',
         amount: parseFloat(amount),
         note: paymentReference.trim(),
         paymentReference: paymentReference.trim(),
@@ -754,6 +818,9 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
     setPaymentReference('');
     setAccountNumber('');
     setSelectedBank(null);
+    setBankAddress('');
+    setRecipientAddress('');
+    setAccountType('Premier Checking');
     setRoutingNumber('');
     setSwiftCode('');
     setRoutingValid(false);
@@ -907,10 +974,24 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
               <span className="font-semibold text-slate-800 dark:text-slate-200">{receipt.recipientBank || 'Aurelith Reserve'}</span>
             </div>
 
+            {receipt.bankAddress && (
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400">Bank Address:</span>
+                <span className="font-medium text-slate-800 dark:text-slate-200 text-right max-w-[60%]">{receipt.bankAddress}</span>
+              </div>
+            )}
+
             <div className="flex justify-between">
               <span className="text-slate-500 dark:text-slate-400">Verified Recipient:</span>
               <span className="font-bold text-[#1C2B4C] dark:text-white">{receipt.recipientName}</span>
             </div>
+
+            {receipt.recipientAddress && (
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400">Recipient Address:</span>
+                <span className="font-medium text-slate-800 dark:text-slate-200 text-right max-w-[60%]">{receipt.recipientAddress}</span>
+              </div>
+            )}
 
             <div className="flex justify-between">
               <span className="text-slate-500 dark:text-slate-400">Recipient Account:</span>
@@ -919,6 +1000,13 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
               </span>
             </div>
 
+            {receipt.accountType && (
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400">Account Type:</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">{receipt.accountType}</span>
+              </div>
+            )}
+
             {receipt.routingNumber && (
               <div className="flex justify-between">
                 <span className="text-slate-500 dark:text-slate-400">Routing Transit (ABA):</span>
@@ -926,7 +1014,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
               </div>
             )}
 
-            {receipt.swiftCode && (
+            {receipt.swiftCode && receipt.recipientBank !== 'Idaho Central Credit Union (ICCU)' && (
               <div className="flex justify-between">
                 <span className="text-slate-500 dark:text-slate-400">SWIFT / BIC Code:</span>
                 <span className="font-mono text-slate-800 dark:text-slate-200">{receipt.swiftCode}</span>
@@ -1091,6 +1179,15 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
               </span>
             </div>
 
+            {transferType === 'external' && (selectedBank?.address || bankAddress) && (
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400">Bank Address:</span>
+                <span className="font-medium text-slate-800 dark:text-slate-200 text-right max-w-[60%]">
+                  {selectedBank?.address || bankAddress}
+                </span>
+              </div>
+            )}
+
             <div className="flex justify-between items-center">
               <span className="text-slate-500 dark:text-slate-400">Recipient Confirmation Info:</span>
               <span className="font-bold text-[#1C2B4C] dark:text-white flex items-center space-x-1">
@@ -1103,6 +1200,15 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 inline" />
               </span>
             </div>
+
+            {transferType === 'external' && recipientAddress && (
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400">Recipient Residential Address:</span>
+                <span className="font-medium text-slate-800 dark:text-slate-200 text-right max-w-[60%]">
+                  {recipientAddress}
+                </span>
+              </div>
+            )}
 
             <div className="flex justify-between">
               <span className="text-slate-500 dark:text-slate-400">Masked Recipient Account:</span>
@@ -1118,16 +1224,25 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
             </div>
 
             {transferType === 'external' && (
+              <div className="flex justify-between">
+                <span className="text-slate-500 dark:text-slate-400">Account Type:</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">{accountType}</span>
+              </div>
+            )}
+
+            {transferType === 'external' && (
               <>
                 <div className="flex justify-between">
                   <span className="text-slate-500 dark:text-slate-400">Routing Number:</span>
                   <span className="font-mono text-slate-800 dark:text-slate-200">{routingNumber}</span>
                 </div>
 
-                <div className="flex justify-between">
-                  <span className="text-slate-500 dark:text-slate-400">SWIFT Code:</span>
-                  <span className="font-mono text-slate-800 dark:text-slate-200">{swiftCode}</span>
-                </div>
+                {selectedBank?.supportsSwift !== false && selectedBank?.id !== 'iccu' && swiftCode && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500 dark:text-slate-400">SWIFT / BIC Code:</span>
+                    <span className="font-mono text-slate-800 dark:text-slate-200">{swiftCode}</span>
+                  </div>
+                )}
               </>
             )}
 
@@ -1295,17 +1410,128 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
             {/* OTHER BANK / INTERBANK TRANSFER FORM */}
             {transferType === 'external' && (
               <form onSubmit={handleReview} className="space-y-5">
-                {/* Account Number */}
+                {/* Standardized 8-Field Transfer Details Form */}
+
+                {/* Field 1: Full Account Holder's Name */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
+                      Full Account Holder's Name
+                    </label>
+                    {verifiedRecipient && isRecipientConfirmed && (
+                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center space-x-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Verified Account Holder</span>
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Enter account holder's name or verify via account number"
+                    value={recipientName}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setRecipientName(val);
+                      if (verifiedRecipient) {
+                        setVerifiedRecipient({ ...verifiedRecipient, recipientName: val });
+                      }
+                    }}
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] border border-slate-300 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-semibold text-slate-900 dark:text-white focus:bg-white dark:focus:bg-[#152033] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C]"
+                  />
+                </div>
+
+                {/* Field 2: Bank Name */}
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
-                    Account Number
+                    Bank Name
                   </label>
+                  <div className="relative" ref={bankDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setIsBankDropdownOpen(!isBankDropdownOpen)}
+                      className={`w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] border rounded-xl text-left flex items-center justify-between cursor-pointer transition-colors ${
+                        selectedBank
+                          ? 'border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-semibold'
+                          : 'border-slate-300 dark:border-slate-700 text-slate-400 dark:text-slate-500'
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2 truncate">
+                        <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
+                        <span className="text-xs sm:text-sm truncate">
+                          {selectedBank ? selectedBank.name : 'Select Bank'}
+                        </span>
+                      </div>
+                      <span className="text-xs text-slate-400 font-semibold ml-2">▾</span>
+                    </button>
+
+                    {isBankDropdownOpen && (
+                      <div className="absolute z-30 left-0 right-0 mt-2 bg-white dark:bg-[#152033] rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 p-3 space-y-2 max-h-64 overflow-y-auto animate-fadeIn">
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="Search supported bank by name (e.g. ICCU, Chase, BofA)..."
+                            value={bankSearch}
+                            onChange={(e) => setBankSearch(e.target.value)}
+                            className="w-full px-3 py-1.5 pl-8 bg-slate-50 dark:bg-[#10192A] border border-slate-200 dark:border-slate-700 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-[#1C2B4C] dark:focus:ring-slate-500"
+                            autoFocus
+                          />
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
+                        </div>
+                        <div className="space-y-1">
+                          {filteredBanks.map((bank) => {
+                            const isCurrent = selectedBank?.id === bank.id;
+                            const isNoSwift = bank.supportsSwift === false || bank.id === 'iccu';
+                            return (
+                              <div
+                                key={bank.id}
+                                onClick={() => handleSelectBank(bank)}
+                                className={`px-3 py-2 rounded-lg text-xs cursor-pointer flex items-center justify-between transition-colors ${
+                                  isCurrent
+                                    ? 'bg-slate-100 dark:bg-slate-800 text-[#1C2B4C] dark:text-white font-bold'
+                                    : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200'
+                                }`}
+                              >
+                                <div>
+                                  <div className="font-semibold">{bank.name}</div>
+                                  <div className="text-[10px] text-slate-400 dark:text-slate-500">
+                                    {bank.country} • ABA: {bank.routingNumber} {isNoSwift ? '• Domestic Fedwire/FedACH (No SWIFT)' : `• SWIFT: ${bank.swiftCode}`}
+                                  </div>
+                                </div>
+                                {isCurrent && <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 ml-2" />}
+                              </div>
+                            );
+                          })}
+                          {filteredBanks.length === 0 && (
+                            <div className="py-3 text-center text-xs text-slate-400">
+                              No banks match "{bankSearch}"
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Field 3: Bank Account Number */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
+                      Bank Account Number
+                    </label>
+                    {verifiedRecipient && isRecipientConfirmed && (
+                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center space-x-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Directory Verified</span>
+                      </span>
+                    )}
+                  </div>
                   <div className="relative">
                     <input
                       type="text"
                       required
                       inputMode="text"
-                      placeholder="Enter account number"
+                      placeholder="Enter account number (e.g. 9384710291)"
                       value={accountNumber}
                       onChange={(e) => handleAccountNumberChange(e.target.value)}
                       onPaste={handlePasteAccountNumber}
@@ -1325,7 +1551,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                   </div>
                 </div>
 
-                {/* Verified Recipient Summary (Compact Presentation - Section 2) */}
+                {/* Verified Recipient Summary Badge */}
                 {verifiedRecipient && isRecipientConfirmed && (
                   <div className="p-3.5 sm:p-4 bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl flex items-start justify-between gap-3 animate-fadeIn">
                     <div className="space-y-1 min-w-0">
@@ -1365,13 +1591,13 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
 
                 {/* Error Notice */}
                 {verificationError && !verifiedRecipient && (
-                  <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-red-800 dark:text-red-300 text-xs flex items-center space-x-2 animate-fadeIn">
-                    <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />
+                  <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-amber-800 dark:text-amber-300 text-xs flex items-center space-x-2 animate-fadeIn">
+                    <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
                     <span>{verificationError}</span>
                   </div>
                 )}
 
-                {/* Ambiguous Bank Selection (Section 2, Req 3) */}
+                {/* Ambiguous Bank Selection */}
                 {requiresBankSelection && ambiguousBanks.length > 0 && (
                   <div className="p-3.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-2xl space-y-2 animate-fadeIn">
                     <div className="flex items-center space-x-2 text-xs font-bold text-amber-900 dark:text-amber-300">
@@ -1403,88 +1629,95 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                   </div>
                 )}
 
-                {/* Bank Name */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
-                    Bank Name
-                  </label>
-                  <div className="relative" ref={bankDropdownRef}>
-                    <button
-                      type="button"
-                      onClick={() => setIsBankDropdownOpen(!isBankDropdownOpen)}
-                      className={`w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] border rounded-xl text-left flex items-center justify-between cursor-pointer transition-colors ${
-                        selectedBank
-                          ? 'border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-semibold'
-                          : 'border-slate-300 dark:border-slate-700 text-slate-400 dark:text-slate-500'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2 truncate">
-                        <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
-                        <span className="text-xs sm:text-sm truncate">
-                          {selectedBank ? selectedBank.name : 'Select Bank'}
-                        </span>
+                {/* Field 4 & 5: Bank Routing Number (ABA) and SWIFT/BIC Code */}
+                {selectedBank?.supportsSwift !== false && selectedBank?.id !== 'iccu' ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
+                          Bank Routing Number (ABA)
+                        </label>
+                        {routingValid && (
+                          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center space-x-1">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>Verified</span>
+                          </span>
+                        )}
                       </div>
-                      <span className="text-xs text-slate-400 font-semibold ml-2">▾</span>
-                    </button>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          required
+                          placeholder={isPreviouslyUsedRecipient ? 'Routing number' : 'Enter 9-digit routing number'}
+                          value={routingNumber}
+                          onChange={(e) => handleRoutingChange(e.target.value)}
+                          className={`w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] rounded-xl text-xs sm:text-sm font-mono font-semibold text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-[#152033] focus:outline-none transition-colors ${
+                            routingValid
+                              ? 'border-2 border-emerald-500 focus:ring-1 focus:ring-emerald-500'
+                              : routingError
+                              ? 'border-2 border-red-500 focus:ring-1 focus:ring-red-500'
+                              : 'border border-slate-300 dark:border-slate-700 focus:ring-2 focus:ring-[#1C2B4C]'
+                          }`}
+                        />
+                        {routingValid && (
+                          <div className="absolute right-3.5 top-3 flex items-center pointer-events-none text-emerald-500">
+                            <Check className="w-4 h-4 stroke-[3]" />
+                          </div>
+                        )}
+                      </div>
+                      {routingError && (
+                        <p className="mt-1 text-[11px] text-red-600 dark:text-red-400 font-medium">{routingError}</p>
+                      )}
+                    </div>
 
-                    {isBankDropdownOpen && (
-                      <div className="absolute z-30 left-0 right-0 mt-2 bg-white dark:bg-[#152033] rounded-2xl shadow-xl border border-slate-200 dark:border-slate-800 p-3 space-y-2 max-h-64 overflow-y-auto animate-fadeIn">
-                        <div className="relative">
-                          <input
-                            type="text"
-                            placeholder="Search supported bank by name..."
-                            value={bankSearch}
-                            onChange={(e) => setBankSearch(e.target.value)}
-                            className="w-full px-3 py-1.5 pl-8 bg-slate-50 dark:bg-[#10192A] border border-slate-200 dark:border-slate-700 rounded-lg text-xs focus:outline-none focus:ring-1 focus:ring-[#1C2B4C] dark:focus:ring-slate-500"
-                            autoFocus
-                          />
-                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-2.5" />
-                        </div>
-                        <div className="space-y-1">
-                          {filteredBanks.map((bank) => {
-                            const isCurrent = selectedBank?.id === bank.id;
-                            return (
-                              <div
-                                key={bank.id}
-                                onClick={() => handleSelectBank(bank)}
-                                className={`px-3 py-2 rounded-lg text-xs cursor-pointer flex items-center justify-between transition-colors ${
-                                  isCurrent
-                                    ? 'bg-slate-100 dark:bg-slate-800 text-[#1C2B4C] dark:text-white font-bold'
-                                    : 'hover:bg-slate-50 dark:hover:bg-slate-800/60 text-slate-700 dark:text-slate-200'
-                                }`}
-                              >
-                                <div>
-                                  <div className="font-semibold">{bank.name}</div>
-                                  <div className="text-[10px] text-slate-400 dark:text-slate-500">
-                                    {bank.country} • ABA: {bank.routingNumber} • SWIFT: {bank.swiftCode}
-                                  </div>
-                                </div>
-                                {isCurrent && <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0 ml-2" />}
-                              </div>
-                            );
-                          })}
-                          {filteredBanks.length === 0 && (
-                            <div className="py-3 text-center text-xs text-slate-400">
-                              No banks match "{bankSearch}"
-                            </div>
-                          )}
-                        </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
+                          SWIFT / BIC Code
+                        </label>
+                        {swiftValid && (
+                          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center space-x-1">
+                            <CheckCircle2 className="w-3 h-3" />
+                            <span>Verified</span>
+                          </span>
+                        )}
                       </div>
-                    )}
+                      <div className="relative">
+                        <input
+                          type="text"
+                          required
+                          placeholder={isPreviouslyUsedRecipient ? 'SWIFT code' : 'Enter 8 or 11-char SWIFT code'}
+                          value={swiftCode}
+                          onChange={(e) => handleSwiftChange(e.target.value)}
+                          className={`w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] rounded-xl text-xs sm:text-sm font-mono font-semibold text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-[#152033] focus:outline-none transition-colors ${
+                            swiftValid
+                              ? 'border-2 border-emerald-500 focus:ring-1 focus:ring-emerald-500'
+                              : swiftError
+                              ? 'border-2 border-red-500 focus:ring-1 focus:ring-red-500'
+                              : 'border border-slate-300 dark:border-slate-700 focus:ring-2 focus:ring-[#1C2B4C]'
+                          }`}
+                        />
+                        {swiftValid && (
+                          <div className="absolute right-3.5 top-3 flex items-center pointer-events-none text-emerald-500">
+                            <Check className="w-4 h-4 stroke-[3]" />
+                          </div>
+                        )}
+                      </div>
+                      {swiftError && (
+                        <p className="mt-1 text-[11px] text-red-600 dark:text-red-400 font-medium">{swiftError}</p>
+                      )}
+                    </div>
                   </div>
-                </div>
-
-                {/* Routing Number & SWIFT Code (Sections 3, 4, 6) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                ) : (
                   <div>
                     <div className="flex items-center justify-between mb-1.5">
                       <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
-                        Routing Number (ABA)
+                        Bank Routing Number (ABA)
                       </label>
                       {routingValid && (
                         <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center space-x-1">
                           <CheckCircle2 className="w-3 h-3" />
-                          <span>Verified</span>
+                          <span>Verified Routing (ICCU ABA: 324173361)</span>
                         </span>
                       )}
                     </div>
@@ -1492,7 +1725,7 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                       <input
                         type="text"
                         required
-                        placeholder={isPreviouslyUsedRecipient ? 'Routing number' : 'Enter 9-digit routing number'}
+                        placeholder="Enter 9-digit routing number (e.g. 324173361)"
                         value={routingNumber}
                         onChange={(e) => handleRoutingChange(e.target.value)}
                         className={`w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] rounded-xl text-xs sm:text-sm font-mono font-semibold text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-[#152033] focus:outline-none transition-colors ${
@@ -1512,45 +1745,64 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                     {routingError && (
                       <p className="mt-1 text-[11px] text-red-600 dark:text-red-400 font-medium">{routingError}</p>
                     )}
+                    <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+                      Domestic Credit Union (ICCU transfers process over Fedwire / FedACH; international SWIFT is not required).
+                    </p>
                   </div>
+                )}
 
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase">
-                        SWIFT / BIC Code
-                      </label>
-                      {swiftValid && (
-                        <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center space-x-1">
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span>Verified</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="relative">
-                      <input
-                        type="text"
-                        required
-                        placeholder={isPreviouslyUsedRecipient ? 'SWIFT code' : 'Enter 8 or 11-char SWIFT code'}
-                        value={swiftCode}
-                        onChange={(e) => handleSwiftChange(e.target.value)}
-                        className={`w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] rounded-xl text-xs sm:text-sm font-mono font-semibold text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-[#152033] focus:outline-none transition-colors ${
-                          swiftValid
-                            ? 'border-2 border-emerald-500 focus:ring-1 focus:ring-emerald-500'
-                            : swiftError
-                            ? 'border-2 border-red-500 focus:ring-1 focus:ring-red-500'
-                            : 'border border-slate-300 dark:border-slate-700 focus:ring-2 focus:ring-[#1C2B4C]'
-                        }`}
-                      />
-                      {swiftValid && (
-                        <div className="absolute right-3.5 top-3 flex items-center pointer-events-none text-emerald-500">
-                          <Check className="w-4 h-4 stroke-[3]" />
-                        </div>
-                      )}
-                    </div>
-                    {swiftError && (
-                      <p className="mt-1 text-[11px] text-red-600 dark:text-red-400 font-medium">{swiftError}</p>
-                    )}
+                {/* Field 6: Bank Address (Strictly Separate from Recipient Address) */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
+                    Bank Address <span className="text-slate-400 font-normal lowercase">(receiving institution clearing headquarters)</span>
+                  </label>
+                  <div className="w-full px-4 py-2.5 bg-slate-100/80 dark:bg-[#10192A]/80 border border-slate-200 dark:border-slate-800 rounded-xl text-xs sm:text-sm text-slate-800 dark:text-slate-200 flex items-center space-x-2.5">
+                    <Building2 className="w-4 h-4 text-slate-400 shrink-0" />
+                    <span className="font-medium truncate">
+                      {selectedBank?.address || bankAddress || (selectedBank ? '4400 Central Way, Chubbuck, ID 83202, United States of America' : 'Select receiving bank to display authoritative headquarters address')}
+                    </span>
                   </div>
+                  <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+                    Official clearing headquarters address for wire settlement (kept strictly separate from recipient's home address).
+                  </p>
+                </div>
+
+                {/* Field 7: Recipient's Residential Address */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
+                    Recipient's Residential Address
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="e.g. 1482 Alpine Ridge Way, Pocatello, ID 83204, USA"
+                      value={recipientAddress}
+                      onChange={(e) => setRecipientAddress(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] border border-slate-300 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-medium text-slate-900 dark:text-white focus:bg-white dark:focus:bg-[#152033] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C]"
+                    />
+                  </div>
+                  <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+                    Recipient's personal or corporate physical address.
+                  </p>
+                </div>
+
+                {/* Field 8: Account Type */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase mb-1.5">
+                    Account Type
+                  </label>
+                  <select
+                    value={accountType}
+                    onChange={(e) => setAccountType(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-slate-50 dark:bg-[#10192A] border border-slate-300 dark:border-slate-700 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-200 focus:bg-white dark:focus:bg-[#152033] focus:outline-none focus:ring-2 focus:ring-[#1C2B4C] cursor-pointer"
+                  >
+                    <option value="Premier Checking">Premier Checking</option>
+                    <option value="Personal Checking">Personal Checking</option>
+                    <option value="Savings Account">Savings Account</option>
+                    <option value="Commercial Business Checking">Commercial Business Checking</option>
+                    <option value="Private Wealth / Treasury Account">Private Wealth / Treasury Account</option>
+                    <option value="Money Market Account">Money Market Account</option>
+                  </select>
                 </div>
 
                 {/* Transfer Amount */}
@@ -1614,7 +1866,16 @@ export const TransfersView: React.FC<TransfersViewProps> = ({ onSuccessReturn })
                 <div className="pt-2">
                   <button
                     type="submit"
-                    disabled={!verifiedRecipient || !isRecipientConfirmed || !selectedBank || !routingValid || !swiftValid}
+                    disabled={
+                      !accountNumber ||
+                      accountNumber.length < 6 ||
+                      !selectedBank ||
+                      !recipientName.trim() ||
+                      !routingValid ||
+                      (selectedBank.supportsSwift !== false && selectedBank.id !== 'iccu' && !swiftValid) ||
+                      !amount ||
+                      parseFloat(amount) <= 0
+                    }
                     className="w-full py-3.5 bg-[#C8102E] hover:bg-[#A00B22] text-white font-bold text-xs sm:text-sm rounded-full shadow-md transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
                   >
                     <span>Review Transfer</span>

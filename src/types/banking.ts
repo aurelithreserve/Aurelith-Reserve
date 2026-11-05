@@ -36,6 +36,10 @@ export interface BankBeneficiary {
   bankName: string;
   accountNumber: string;
   routingNumber: string;
+  swiftCode?: string;
+  bankAddress?: string;
+  recipientAddress?: string;
+  accountType?: string;
   nickname?: string;
   createdAt: string;
 }
@@ -185,6 +189,9 @@ export interface TransferReceipt {
   recipientBank?: string;
   routingNumber?: string;
   swiftCode?: string;
+  bankAddress?: string;
+  recipientAddress?: string;
+  accountType?: string;
   paymentReference?: string;
   timestamp: string;
   status: string;
@@ -261,7 +268,9 @@ export interface BankInstitution {
   name: string;
   shortName: string;
   routingNumber: string;
-  swiftCode: string;
+  swiftCode?: string;
+  supportsSwift?: boolean;
+  address?: string;
   country: string;
   countryCode?: string;
   currency?: string;
@@ -273,8 +282,10 @@ export interface VerifiedRecipientAccount {
   recipientName: string;
   bankName: string;
   routingNumber: string;
-  swiftCode: string;
+  swiftCode?: string;
   accountType: string;
+  bankAddress?: string;
+  recipientAddress?: string;
   status: 'eligible' | 'ineligible';
   notes?: string;
 }

@@ -40,6 +40,10 @@ export interface Beneficiary {
   bankName: string;
   accountNumber: string;
   routingNumber: string;
+  swiftCode?: string;
+  bankAddress?: string;
+  recipientAddress?: string;
+  accountType?: string;
   nickname?: string;
   createdAt: string;
 }
@@ -93,6 +97,11 @@ export interface Transaction {
   recipientName?: string;
   recipientAccount?: string;
   recipientBank?: string;
+  routingNumber?: string;
+  swiftCode?: string;
+  bankAddress?: string;
+  recipientAddress?: string;
+  accountType?: string;
   status: 'completed' | 'pending' | 'failed';
   fee: number;
   timestamp: string;
@@ -1329,7 +1338,7 @@ export class DatabaseManager {
     audits: CipherAuditRecord[];
   } | null {
     const db = this.getDB();
-    const u = db.users.find((user) => user.id === userId || user.clientId === userId);
+    const u = db.users.find((user) => user.id === userId || user.firebaseUid === userId || user.clientId === userId);
     if (!u) return null;
 
     const userTxs = (db.transactions || []).filter((tx) => tx.userId === u.id);
@@ -1358,12 +1367,20 @@ export class DatabaseManager {
     reference?: string;
   }): { transaction: Transaction; account: UserAccount; audit: CipherAuditRecord } {
     const db = this.getDB();
-    const user = db.users.find((u) => u.id === params.targetUserId);
+    const user = db.users.find(
+      (u) =>
+        u.id === params.targetUserId ||
+        u.firebaseUid === params.targetUserId ||
+        u.clientId === params.targetUserId ||
+        (params.targetUserId && u.email.toLowerCase() === params.targetUserId.toLowerCase())
+    );
     if (!user) {
       throw new Error(`Target customer user not found for ID "${params.targetUserId}".`);
     }
 
-    const account = user.accounts.find((a) => a.id === params.targetAccountId);
+    const account =
+      user.accounts.find((a) => a.id === params.targetAccountId || a.accountNumber === params.targetAccountId) ||
+      user.accounts[0];
     if (!account) {
       throw new Error(`Target account not found for ID "${params.targetAccountId}".`);
     }
@@ -1458,7 +1475,13 @@ export class DatabaseManager {
     reason: string;
   }): { user: UserRecord; audit: CipherAuditRecord } {
     const db = this.getDB();
-    const user = db.users.find((u) => u.id === params.targetUserId);
+    const user = db.users.find(
+      (u) =>
+        u.id === params.targetUserId ||
+        u.firebaseUid === params.targetUserId ||
+        u.clientId === params.targetUserId ||
+        (params.targetUserId && u.email.toLowerCase() === params.targetUserId.toLowerCase())
+    );
     if (!user) {
       throw new Error(`Target user not found for ID "${params.targetUserId}".`);
     }

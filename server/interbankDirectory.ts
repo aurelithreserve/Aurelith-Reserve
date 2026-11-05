@@ -6,6 +6,8 @@ export interface BankInstitution {
   shortName: string;
   routingNumber: string;
   swiftCode: string;
+  supportsSwift?: boolean;
+  address?: string;
   country: string;
   countryCode: string;
   currency: string;
@@ -21,6 +23,8 @@ export interface VerifiedRecipientAccount {
   accountType: string;
   status: 'eligible' | 'ineligible';
   notes?: string;
+  bankAddress?: string;
+  recipientAddress?: string;
 }
 
 export const SUPPORTED_BANKS: BankInstitution[] = [
@@ -31,9 +35,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Aurelith Reserve',
     routingNumber: '111301122',
     swiftCode: 'AURUS33D',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '500 Crescent Court, Suite 400, Dallas, TX 75201, United States of America',
     supportedRails: ['Internal Real-Time Book Transfer', 'Fedwire', 'FedACH'],
   },
   {
@@ -42,9 +48,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Chase Bank',
     routingNumber: '111000614',
     swiftCode: 'CHASUS33',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '270 Park Avenue, New York, NY 10017, United States of America',
     supportedRails: ['Fedwire', 'FedACH', 'Real-Time Payments (RTP)'],
   },
   {
@@ -53,10 +61,25 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Bank of America',
     routingNumber: '111000025',
     swiftCode: 'BOFAUS3N',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '100 North Tryon Street, Charlotte, NC 28255, United States of America',
     supportedRails: ['Fedwire', 'FedACH', 'Real-Time Payments (RTP)'],
+  },
+  {
+    id: 'iccu',
+    name: 'Idaho Central Credit Union (ICCU)',
+    shortName: 'Idaho Central Credit Union (ICCU)',
+    routingNumber: '324173361',
+    swiftCode: '',
+    supportsSwift: false,
+    country: 'United States',
+    countryCode: 'US',
+    currency: 'USD',
+    address: '4400 Central Way, Chubbuck, ID 83202, United States of America',
+    supportedRails: ['Fedwire', 'FedACH', 'Share Branching'],
   },
   {
     id: 'wells_fargo',
@@ -64,9 +87,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Wells Fargo',
     routingNumber: '111900659',
     swiftCode: 'WFBIUS6S',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '420 Montgomery Street, San Francisco, CA 94104, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -75,9 +100,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Citibank',
     routingNumber: '021000089',
     swiftCode: 'CITIUS33',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '388 Greenwich Street, New York, NY 10013, United States of America',
     supportedRails: ['Fedwire', 'FedACH', 'SWIFT International'],
   },
   {
@@ -86,9 +113,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'PNC Bank',
     routingNumber: '043000096',
     swiftCode: 'PNCBUS33',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '300 Fifth Avenue, Pittsburgh, PA 15222, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -97,9 +126,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Capital One',
     routingNumber: '051405515',
     swiftCode: 'HIBKUS44',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '1680 Capital One Drive, McLean, VA 22102, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -108,9 +139,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'U.S. Bank',
     routingNumber: '091000022',
     swiftCode: 'USBKUS44',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '800 Nicollet Mall, Minneapolis, MN 55402, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -119,9 +152,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Truist',
     routingNumber: '061000104',
     swiftCode: 'SNTRUS3A',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '214 North Tryon Street, Charlotte, NC 28202, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -130,9 +165,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Goldman Sachs Bank',
     routingNumber: '121144994',
     swiftCode: 'GSNYUS33',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '200 West Street, New York, NY 10282, United States of America',
     supportedRails: ['Fedwire', 'FedACH', 'Private Client Clearing'],
   },
   {
@@ -141,9 +178,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Morgan Stanley Bank',
     routingNumber: '026013576',
     swiftCode: 'MSNYUS33',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '1585 Broadway, New York, NY 10036, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -152,9 +191,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'BNY Mellon',
     routingNumber: '021000018',
     swiftCode: 'IRVTUS3N',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '240 Greenwich Street, New York, NY 10286, United States of America',
     supportedRails: ['Fedwire', 'FedACH', 'SWIFT Custody'],
   },
 
@@ -290,6 +331,30 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
 
 // Authorized Directory of External Verified Recipient Accounts
 const VERIFIED_INTERBANK_ACCOUNTS: VerifiedRecipientAccount[] = [
+  // Idaho Central Credit Union (ICCU)
+  {
+    accountNumber: '9384710291',
+    recipientName: 'Trevor Vance',
+    bankName: 'Idaho Central Credit Union (ICCU)',
+    routingNumber: '324173361',
+    swiftCode: '',
+    accountType: 'Premier Checking',
+    status: 'eligible',
+    bankAddress: '4400 Central Way, Chubbuck, ID 83202, United States of America',
+    recipientAddress: '1842 E Center St, Pocatello, ID 83201, USA',
+  },
+  {
+    accountNumber: '4928104829',
+    recipientName: 'Sawtooth Mountain Logging LLC',
+    bankName: 'Idaho Central Credit Union (ICCU)',
+    routingNumber: '324173361',
+    swiftCode: '',
+    accountType: 'Commercial Business Checking',
+    status: 'eligible',
+    bankAddress: '4400 Central Way, Chubbuck, ID 83202, United States of America',
+    recipientAddress: '520 N 5th Ave, Pocatello, ID 83201, USA',
+  },
+
   // JPMorgan Chase Bank
   {
     accountNumber: '9843210091',
@@ -299,6 +364,8 @@ const VERIFIED_INTERBANK_ACCOUNTS: VerifiedRecipientAccount[] = [
     swiftCode: 'CHASUS33',
     accountType: 'Corporate Commercial Checking',
     status: 'eligible',
+    bankAddress: '270 Park Avenue, New York, NY 10017, United States of America',
+    recipientAddress: '1200 Smith St, Suite 2200, Houston, TX 77002, USA',
   },
   {
     accountNumber: '4829104820',
@@ -744,6 +811,8 @@ export class InterbankVerificationService {
           swiftCode: '', // BLANK for new recipient
           accountType: match.accountType,
           status: 'eligible',
+          bankAddress: bank.address || match.bankAddress,
+          recipientAddress: match.recipientAddress,
         },
       };
     }
@@ -767,6 +836,8 @@ export class InterbankVerificationService {
           swiftCode: '', // BLANK for new recipient
           accountType: globalMatch.accountType,
           status: 'eligible',
+          bankAddress: actualBank?.address || globalMatch.bankAddress,
+          recipientAddress: globalMatch.recipientAddress,
         },
       };
     }
@@ -929,6 +1000,8 @@ export class InterbankVerificationService {
           swiftCode: '', // BLANK for new recipient
           accountType: match.accountType,
           status: 'eligible',
+          bankAddress: bank?.address || match.bankAddress,
+          recipientAddress: match.recipientAddress,
         },
       };
     }
@@ -990,23 +1063,28 @@ export class InterbankVerificationService {
       }
     }
 
-    let swiftValid = false;
+    const bankSupportsSwift = bank.supportsSwift !== false && !!bank.swiftCode && bank.id !== 'iccu';
+    let swiftValid = !bankSupportsSwift;
     let swiftError: string | undefined = undefined;
 
-    if (params.swiftCode) {
-      const cleanSwift = params.swiftCode.trim().toUpperCase();
-      const expectedSwift = bank.swiftCode.toUpperCase();
-      const matches =
-        cleanSwift === expectedSwift ||
-        cleanSwift === `${expectedSwift}XXX` ||
-        (expectedSwift.length === 11 && cleanSwift === expectedSwift.slice(0, 8));
-      if (matches) {
-        swiftValid = true;
-      } else {
-        if (cleanSwift.length >= 8) {
-          swiftError = `SWIFT code does not match ${bank.name} records.`;
+    if (bankSupportsSwift) {
+      if (params.swiftCode) {
+        const cleanSwift = params.swiftCode.trim().toUpperCase();
+        const expectedSwift = bank.swiftCode.toUpperCase();
+        const matches =
+          cleanSwift === expectedSwift ||
+          cleanSwift === `${expectedSwift}XXX` ||
+          (expectedSwift.length === 11 && cleanSwift === expectedSwift.slice(0, 8));
+        if (matches) {
+          swiftValid = true;
+        } else {
+          if (cleanSwift.length >= 8) {
+            swiftError = `SWIFT code does not match ${bank.name} records.`;
+          }
         }
       }
+    } else {
+      swiftValid = true;
     }
 
     return {
@@ -1016,7 +1094,7 @@ export class InterbankVerificationService {
       routingError,
       swiftError,
       authoritativeRouting: bank.routingNumber,
-      authoritativeSwift: bank.swiftCode,
+      authoritativeSwift: bankSupportsSwift ? bank.swiftCode : '',
     };
   }
 
@@ -1037,17 +1115,31 @@ export class InterbankVerificationService {
       ? this.verifyRecipient(bankName, accountNumber, userId)
       : this.resolveRecipient(accountNumber, userId);
 
-    if (!verification.verified || !verification.recipient) {
-      return {
-        valid: false,
-        error:
-          verification.error ||
-          'Recipient account could not be verified with the selected financial institution.',
-      };
+    const targetBank = (bankName ? this.findBank(bankName) : null) || (verification.recipient ? this.findBank(verification.recipient.bankName) : null);
+
+    let rec = verification.recipient;
+    if (!verification.verified || !rec) {
+      if (recipientName && recipientName.trim().length >= 2 && targetBank) {
+        rec = {
+          accountNumber,
+          recipientName: recipientName.trim(),
+          bankName: targetBank.name,
+          routingNumber: targetBank.routingNumber,
+          swiftCode: targetBank.supportsSwift !== false ? targetBank.swiftCode : '',
+          accountType: 'Personal / Commercial Account',
+          status: 'eligible',
+          bankAddress: targetBank.address,
+        };
+      } else {
+        return {
+          valid: false,
+          error:
+            verification.error ||
+            'Recipient account could not be verified with the selected financial institution.',
+        };
+      }
     }
 
-    const rec = verification.recipient;
-    const targetBank = this.findBank(rec.bankName) || (bankName ? this.findBank(bankName) : null);
     if (!targetBank) {
       return {
         valid: false,
@@ -1098,25 +1190,28 @@ export class InterbankVerificationService {
       };
     }
 
-    // Validate SWIFT/BIC code against authoritative bank record
-    if (swiftCode) {
-      const cleanSwift = swiftCode.trim().toUpperCase();
-      const expectedSwift = targetBank.swiftCode.toUpperCase();
-      const matches =
-        cleanSwift === expectedSwift ||
-        cleanSwift === `${expectedSwift}XXX` ||
-        (expectedSwift.length === 11 && cleanSwift === expectedSwift.slice(0, 8));
-      if (!matches) {
+    // Validate SWIFT/BIC code against authoritative bank record (only if bank requires SWIFT)
+    const bankRequiresSwift = targetBank.supportsSwift !== false && !!targetBank.swiftCode && targetBank.id !== 'iccu';
+    if (bankRequiresSwift) {
+      if (swiftCode) {
+        const cleanSwift = swiftCode.trim().toUpperCase();
+        const expectedSwift = targetBank.swiftCode.toUpperCase();
+        const matches =
+          cleanSwift === expectedSwift ||
+          cleanSwift === `${expectedSwift}XXX` ||
+          (expectedSwift.length === 11 && cleanSwift === expectedSwift.slice(0, 8));
+        if (!matches) {
+          return {
+            valid: false,
+            error: `SWIFT/BIC code "${cleanSwift}" does not match official institution SWIFT identifier "${targetBank.swiftCode}" for ${targetBank.name}.`,
+          };
+        }
+      } else if (!verification.isPreviouslyUsed) {
         return {
           valid: false,
-          error: `SWIFT/BIC code "${cleanSwift}" does not match official institution SWIFT identifier "${targetBank.swiftCode}" for ${targetBank.name}.`,
+          error: `SWIFT/BIC code is required for new recipient at ${targetBank.name}.`,
         };
       }
-    } else if (!verification.isPreviouslyUsed) {
-      return {
-        valid: false,
-        error: `SWIFT/BIC code is required for new recipient at ${targetBank.name}.`,
-      };
     }
 
     return {
@@ -1124,7 +1219,9 @@ export class InterbankVerificationService {
       validatedRecipient: {
         ...rec,
         routingNumber: routingNumber || targetBank.routingNumber,
-        swiftCode: swiftCode || targetBank.swiftCode,
+        swiftCode: swiftCode || targetBank.swiftCode || '',
+        bankAddress: targetBank.address || rec.bankAddress,
+        recipientAddress: rec.recipientAddress,
       },
     };
   }

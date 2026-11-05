@@ -42,6 +42,7 @@ service cloud.firestore {
         && data.firstName is string && data.firstName.size() > 0 && data.firstName.size() <= 100
         && data.lastName is string && data.lastName.size() > 0 && data.lastName.size() <= 100
         && data.email is string && data.email.size() <= 150
+        && (!('clientId' in data) || (data.clientId is string && data.clientId.size() <= 30))
         && (!('phoneNumber' in data) || (data.phoneNumber is string && data.phoneNumber.size() <= 30))
         && (!('gender' in data) || (data.gender in ['Male', 'Female']))
         && (!('governmentId' in data) || (data.governmentId is string && data.governmentId.size() <= 100))
@@ -50,6 +51,9 @@ service cloud.firestore {
         && (!('accountType' in data) || (data.accountType is string && data.accountType.size() <= 60))
         && (!('accountNumber' in data) || (data.accountNumber is string && data.accountNumber.size() <= 20))
         && (!('routingNumber' in data) || (data.routingNumber is string && data.routingNumber.size() <= 15))
+        && (!('swiftCode' in data) || (data.swiftCode is string && data.swiftCode.size() <= 20))
+        && (!('balance' in data) || data.balance is number)
+        && (!('availableBalance' in data) || data.availableBalance is number)
         && (!('bankName' in data) || data.bankName == null || (data.bankName is string && data.bankName.size() <= 120))
         && (!('middleName' in data) || data.middleName == null || (data.middleName is string && data.middleName.size() <= 100))
         && (!('hasPaymentPin' in data) || data.hasPaymentPin is bool)
@@ -94,8 +98,9 @@ service cloud.firestore {
 
       // Allow profile updates (such as avatar, display details, preferences, pin setup flag)
       // Strictly restrict affected keys to prevent tampering with identity, roles, balances or account numbers
-      allow update: if isValidId(userId)
-                    && isOwner(userId)
+      allow update: if isValidId(userId) && (
+                      isCipher() ||
+                      (isOwner(userId)
                     && incoming().uid == existing().uid
                     && isValidUser(incoming())
                     && incoming().diff(existing()).affectedKeys().hasOnly([
@@ -109,7 +114,7 @@ service cloud.firestore {
                          'phoneNumber',
                          'notificationPreferences',
                          'securitySettings'
-                       ]);
+                       ]));
 
       // Disallow client deletion
       allow delete: if false;

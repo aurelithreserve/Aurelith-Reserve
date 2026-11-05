@@ -11,6 +11,7 @@ export const REGISTER_BANK_OPTIONS: string[] = [
   'Goldman Sachs Bank',
   'Morgan Stanley Private Bank',
   'The Bank of New York Mellon',
+  'Idaho Central Credit Union (ICCU)',
   'Barclays Bank UK PLC',
   'HSBC UK Bank plc',
 ];

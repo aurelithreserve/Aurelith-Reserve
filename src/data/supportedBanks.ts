@@ -8,9 +8,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Aurelith Reserve',
     routingNumber: '111301122',
     swiftCode: 'AURUS33D',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '500 Crescent Court, Suite 400, Dallas, TX 75201, United States of America',
     supportedRails: ['Internal Real-Time Book Transfer', 'Fedwire', 'FedACH'],
   },
   {
@@ -19,9 +21,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Chase Bank',
     routingNumber: '111000614',
     swiftCode: 'CHASUS33',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '270 Park Avenue, New York, NY 10017, United States of America',
     supportedRails: ['Fedwire', 'FedACH', 'Real-Time Payments (RTP)'],
   },
   {
@@ -30,10 +34,25 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Bank of America',
     routingNumber: '111000025',
     swiftCode: 'BOFAUS3N',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '100 North Tryon Street, Charlotte, NC 28255, United States of America',
     supportedRails: ['Fedwire', 'FedACH', 'Real-Time Payments (RTP)'],
+  },
+  {
+    id: 'iccu',
+    name: 'Idaho Central Credit Union (ICCU)',
+    shortName: 'Idaho Central Credit Union (ICCU)',
+    routingNumber: '324173361',
+    swiftCode: '',
+    supportsSwift: false,
+    country: 'United States',
+    countryCode: 'US',
+    currency: 'USD',
+    address: '4400 Central Way, Chubbuck, ID 83202, United States of America',
+    supportedRails: ['Fedwire', 'FedACH', 'Share Branching'],
   },
   {
     id: 'wells_fargo',
@@ -41,9 +60,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Wells Fargo',
     routingNumber: '111900659',
     swiftCode: 'WFBIUS6S',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '420 Montgomery Street, San Francisco, CA 94104, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -52,9 +73,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Citibank',
     routingNumber: '021000089',
     swiftCode: 'CITIUS33',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '388 Greenwich Street, New York, NY 10013, United States of America',
     supportedRails: ['Fedwire', 'FedACH', 'SWIFT International'],
   },
   {
@@ -63,9 +86,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'PNC Bank',
     routingNumber: '043000096',
     swiftCode: 'PNCBUS33',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '300 Fifth Avenue, Pittsburgh, PA 15222, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -74,9 +99,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Capital One',
     routingNumber: '051405515',
     swiftCode: 'HIBKUS44',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '1680 Capital One Drive, McLean, VA 22102, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -85,9 +112,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'U.S. Bank',
     routingNumber: '091000022',
     swiftCode: 'USBKUS44',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '800 Nicollet Mall, Minneapolis, MN 55402, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -96,9 +125,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Truist',
     routingNumber: '061000104',
     swiftCode: 'SNTRUS3A',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '214 North Tryon Street, Charlotte, NC 28202, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -107,9 +138,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Goldman Sachs Bank',
     routingNumber: '121144994',
     swiftCode: 'GSNYUS33',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '200 West Street, New York, NY 10282, United States of America',
     supportedRails: ['Fedwire', 'FedACH', 'Private Client Clearing'],
   },
   {
@@ -118,9 +151,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'Morgan Stanley Bank',
     routingNumber: '026013576',
     swiftCode: 'MSNYUS33',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '1585 Broadway, New York, NY 10036, United States of America',
     supportedRails: ['Fedwire', 'FedACH'],
   },
   {
@@ -129,9 +164,11 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
     shortName: 'BNY Mellon',
     routingNumber: '021000018',
     swiftCode: 'IRVTUS3N',
+    supportsSwift: true,
     country: 'United States',
     countryCode: 'US',
     currency: 'USD',
+    address: '240 Greenwich Street, New York, NY 10286, United States of America',
     supportedRails: ['Fedwire', 'FedACH', 'SWIFT Custody'],
   },
 
@@ -265,7 +302,38 @@ export const SUPPORTED_BANKS: BankInstitution[] = [
   },
 ];
 
-export const KNOWN_VERIFIED_RECIPIENTS: Record<string, { recipientName: string; bankName: string; routingNumber: string; swiftCode: string; accountType: string }> = {
+export const KNOWN_VERIFIED_RECIPIENTS: Record<
+  string,
+  {
+    recipientName: string;
+    bankName: string;
+    routingNumber: string;
+    swiftCode: string;
+    accountType: string;
+    bankAddress?: string;
+    recipientAddress?: string;
+  }
+> = {
+  // Idaho Central Credit Union (ICCU)
+  '9384710291': {
+    recipientName: 'Trevor Vance',
+    bankName: 'Idaho Central Credit Union (ICCU)',
+    routingNumber: '324173361',
+    swiftCode: '',
+    accountType: 'Premier Checking',
+    bankAddress: '4400 Central Way, Chubbuck, ID 83202, United States of America',
+    recipientAddress: '1842 E Center St, Pocatello, ID 83201, USA',
+  },
+  '4928104829': {
+    recipientName: 'Sawtooth Mountain Logging LLC',
+    bankName: 'Idaho Central Credit Union (ICCU)',
+    routingNumber: '324173361',
+    swiftCode: '',
+    accountType: 'Commercial Business Checking',
+    bankAddress: '4400 Central Way, Chubbuck, ID 83202, United States of America',
+    recipientAddress: '520 N 5th Ave, Pocatello, ID 83201, USA',
+  },
+
   // JPMorgan Chase Bank
   '9843210091': {
     recipientName: 'Lone Star Energy & Utilities LLC',
@@ -273,6 +341,8 @@ export const KNOWN_VERIFIED_RECIPIENTS: Record<string, { recipientName: string; 
     routingNumber: '111000614',
     swiftCode: 'CHASUS33',
     accountType: 'Corporate Commercial Checking',
+    bankAddress: '270 Park Avenue, New York, NY 10017, United States of America',
+    recipientAddress: '1200 Smith St, Suite 2200, Houston, TX 77002, USA',
   },
   '4829104820': {
     recipientName: 'Marcus Vance',
@@ -280,6 +350,8 @@ export const KNOWN_VERIFIED_RECIPIENTS: Record<string, { recipientName: string; 
     routingNumber: '111000614',
     swiftCode: 'CHASUS33',
     accountType: 'Personal Premier Checking',
+    bankAddress: '270 Park Avenue, New York, NY 10017, United States of America',
+    recipientAddress: '742 Evergreen Terrace, Dallas, TX 75204, USA',
   },
   '2048192048': {
     recipientName: 'Highland Park Holdings Ltd',

@@ -18,6 +18,7 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { formatClientId } from '../utils/clientIdFormatter';
+import { getAuthoritativeBankInfo, generateUniqueAccountNumber } from '../utils/bankingIdentifiers';
 
 export interface LoginResult {
   requireDeviceVerification: boolean;
@@ -41,7 +42,9 @@ interface BankingAuthContextType {
   login: (identifier: string, pass: string, governmentId?: string) => Promise<LoginResult>;
   loginWithPhone: (phone: string, pass: string) => Promise<LoginResult>;
   loginWithGoogle: () => Promise<BankingUser>;
-  completeDeviceVerification: (paymentPin: string) => Promise<BankingUser>;
+  completeDeviceVerification: (
+    params: { paymentPin: string; otpCode?: string; clientId?: string } | string
+  ) => Promise<BankingUser>;
   setupInitialPinAndVerifyDevice: (payload: {
     password: string;
     newPin: string;
@@ -107,20 +110,34 @@ function buildBankingUser(data: any, fbUser?: FirebaseUser | null): BankingUser 
     flagReason: data.flagReason,
     accounts:
       data.accounts && data.accounts.length > 0
-        ? data.accounts.map((acc: any) => isTarget60FCE0 && (acc.balance === 0 || acc.balance == null) ? { ...acc, balance: 3867235.00, availableBalance: 3867235.00 } : acc)
+        ? data.accounts.map((acc: any) => {
+            const authBank = getAuthoritativeBankInfo(data.bankName);
+            const bal = isTarget60FCE0 && (acc.balance === 0 || acc.balance == null) ? 3867235.00 : (acc.balance ?? data.balance ?? resolvedBalance);
+            return {
+              ...acc,
+              routingNumber: acc.routingNumber || data.routingNumber || authBank.routingNumber,
+              swiftCode: acc.swiftCode || data.swiftCode || authBank.swiftCode,
+              balance: bal,
+              availableBalance: acc.availableBalance ?? bal,
+            };
+          })
         : [
-            {
-              id: isTarget60FCE0 ? 'acc_ar_60fce0_01' : `acc_${uid.slice(0, 8)}_1`,
-              accountNumber: data.accountNumber || (isTarget60FCE0 ? '1100609230' : '1029384756'),
-              routingNumber: data.routingNumber || '111301122',
-              type: 'checking',
-              name: data.accountType || 'Aurelith Premier Checking',
-              currency: 'USD',
-              balance: data.balance ?? resolvedBalance,
-              availableBalance: data.availableBalance ?? (data.balance ?? resolvedBalance),
-              status: 'active',
-              createdAt: data.createdAt || (isTarget60FCE0 ? '2019-01-15T00:00:00.000Z' : new Date().toISOString()),
-            },
+            (() => {
+              const authBank = getAuthoritativeBankInfo(data.bankName);
+              return {
+                id: isTarget60FCE0 ? 'acc_ar_60fce0_01' : `acc_${uid.slice(0, 8)}_1`,
+                accountNumber: data.accountNumber || (isTarget60FCE0 ? '1100609230' : '1029384756'),
+                routingNumber: data.routingNumber || authBank.routingNumber,
+                swiftCode: data.swiftCode || authBank.swiftCode,
+                type: 'checking',
+                name: data.accountType || 'Aurelith Premier Checking',
+                currency: 'USD',
+                balance: data.balance ?? resolvedBalance,
+                availableBalance: data.availableBalance ?? (data.balance ?? resolvedBalance),
+                status: 'active',
+                createdAt: data.createdAt || (isTarget60FCE0 ? '2019-01-15T00:00:00.000Z' : new Date().toISOString()),
+              };
+            })(),
           ],
     cards:
       data.cards && data.cards.length > 0
@@ -245,7 +262,25 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
           const docRef = doc(db, 'users', currentFbUser.uid);
           const snap = await getDoc(docRef);
           if (snap.exists()) {
-            const bUser = buildBankingUser(snap.data(), currentFbUser);
+            const data = snap.data();
+            // Audit and auto-repair missing routingNumber or swiftCode in Firestore
+            if (!data.swiftCode || !data.routingNumber) {
+              const authBank = getAuthoritativeBankInfo(data.bankName);
+              const updates: any = {
+                updatedAt: new Date().toISOString(),
+              };
+              if (!data.swiftCode) updates.swiftCode = authBank.swiftCode;
+              if (!data.routingNumber) updates.routingNumber = authBank.routingNumber;
+              try {
+                await updateDoc(docRef, updates);
+                data.swiftCode = data.swiftCode || authBank.swiftCode;
+                data.routingNumber = data.routingNumber || authBank.routingNumber;
+              } catch (fsErr) {
+                console.warn('Auto-repair banking identifiers note:', fsErr);
+              }
+            }
+
+            const bUser = buildBankingUser(data, currentFbUser);
             setUser(bUser);
             try {
               localStorage.setItem('aurelith_last_email', currentFbUser.email || '');
@@ -481,8 +516,8 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
         const names = (fbUser.displayName || 'Client').trim().split(' ');
         const firstName = names[0] || 'Aurelith';
         const lastName = names.slice(1).join(' ') || 'Client';
-        const primaryAccNumber = `10${Math.floor(10000000 + Math.random() * 90000000)}`;
-        const routingNumber = '111301122';
+        const primaryAccNumber = generateUniqueAccountNumber();
+        const authBank = getAuthoritativeBankInfo('Aurelith Reserve');
         const id = `usr_${fbUser.uid.slice(0, 8)}`;
         const clientId = formatClientId(id);
 
@@ -497,7 +532,12 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
           phoneNumber: fbUser.phoneNumber || '',
           accountType: 'Aurelith Premier Checking',
           accountNumber: primaryAccNumber,
-          routingNumber,
+          routingNumber: authBank.routingNumber,
+          swiftCode: authBank.swiftCode,
+          balance: 0,
+          availableBalance: 0,
+          transferAccess: 'enabled',
+          role: 'customer',
           avatarUrl: fbUser.photoURL || null,
           photoDataUrl: fbUser.photoURL || null,
           hasPaymentPin: false,
@@ -536,8 +576,10 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
         throw new Error('No authenticated Firebase user session found for account creation.');
       }
 
-      const primaryAccNumber = `10${Math.floor(10000000 + Math.random() * 90000000)}`;
-      const routingNumber = '111301122';
+      const authBank = getAuthoritativeBankInfo(payload.bankName);
+      const primaryAccNumber = generateUniqueAccountNumber();
+      const routingNumber = authBank.routingNumber;
+      const swiftCode = authBank.swiftCode;
       const accountType = payload.accountType || 'Premier Checking';
       const id = `usr_${uid.slice(0, 8)}`;
       const clientId = formatClientId(id);
@@ -552,13 +594,18 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
         email: payload.email,
         phoneNumber: payload.phoneNumber || '',
         gender: payload.gender || null,
-        bankName: payload.bankName || null,
+        bankName: payload.bankName || authBank.name,
         idType: payload.idType || 'Social Security Number (SSN)',
         idNumber: payload.idNumber || payload.governmentId || '',
         governmentId: payload.governmentId || payload.idNumber || '',
         accountType,
         accountNumber: primaryAccNumber,
         routingNumber,
+        swiftCode,
+        balance: 0,
+        availableBalance: 0,
+        transferAccess: 'enabled',
+        role: 'customer',
         avatarUrl: null,
         photoDataUrl: null,
         hasPaymentPin: false,
@@ -671,9 +718,29 @@ export const BankingAuthProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return false;
   };
 
-  const completeDeviceVerification = async (paymentPin: string): Promise<BankingUser> => {
+  const completeDeviceVerification = async (
+    params: { paymentPin: string; otpCode?: string; clientId?: string } | string
+  ): Promise<BankingUser> => {
     if (!pendingVerification) throw new Error('No pending device verification session found.');
-    const res = await bankingApi.verifyNewDevice(pendingVerification.verificationToken, paymentPin);
+
+    let pin = '';
+    let otp: string | undefined = undefined;
+    let cId: string | undefined = undefined;
+
+    if (typeof params === 'object') {
+      pin = params.paymentPin;
+      otp = params.otpCode;
+      cId = params.clientId;
+    } else {
+      pin = params;
+    }
+
+    const res = await bankingApi.verifyNewDevice(
+      pendingVerification.verificationToken,
+      pin,
+      otp,
+      cId
+    );
     setPendingVerification(null);
     sessionStorage.removeItem('aurelith_pending_device_challenge');
     if (res.user) {

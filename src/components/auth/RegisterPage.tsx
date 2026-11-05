@@ -33,6 +33,7 @@ import {
 } from '../../utils/identityValidation';
 import confetti from 'canvas-confetti';
 import { BrandLogo } from '../common/BrandLogo';
+import { getAuthoritativeBankInfo } from '../../utils/bankingIdentifiers';
 import { auth, db } from '../../lib/firebase';
 import {
   createUserWithEmailAndPassword,
@@ -482,24 +483,31 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
 
       // Synchronize initial Firestore profile document under /users/{uid}
       try {
+        const authBank = getAuthoritativeBankInfo(formData.bankName.trim());
         await setDoc(
           doc(db, 'users', fbUser.uid),
           {
             uid: fbUser.uid,
             id: resUser.id,
+            clientId: resUser.clientId,
             firstName: formData.firstName.trim(),
             middleName: formData.middleName.trim() || null,
             lastName: formData.lastName.trim(),
             email: formData.email.trim(),
             phoneNumber: e164Phone,
             gender: formData.gender,
-            bankName: formData.bankName.trim(),
+            bankName: formData.bankName.trim() || authBank.name,
             idType: formData.idType,
             idNumber: formData.idNumber.trim(),
             governmentId: formData.idNumber.trim(),
             accountType: selectedAccountType,
             accountNumber: resUser.accounts[0]?.accountNumber || '',
-            routingNumber: resUser.accounts[0]?.routingNumber || '111301122',
+            routingNumber: resUser.accounts[0]?.routingNumber || authBank.routingNumber,
+            swiftCode: resUser.accounts[0]?.swiftCode || authBank.swiftCode,
+            balance: 0,
+            availableBalance: 0,
+            transferAccess: 'enabled',
+            role: 'customer',
             avatarUrl: null,
             photoDataUrl: null,
             hasPaymentPin: false,
